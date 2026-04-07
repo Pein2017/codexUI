@@ -57,6 +57,29 @@ If you are using a provider or AI gateway that is already authenticated and do n
 npx codexapp --no-login
 ```
 
+### Local Repo Launcher With Serena MCP Compatibility
+
+If you run `codexUI` from a local clone and want it to behave like "launch from current project directory", use the bundled launcher:
+
+```bash
+cd /path/to/your/project
+bash /path/to/codexUI-main/scripts/codexapp-current-dir.sh
+```
+
+This launcher:
+
+- sets `CODEX_HOME=$PWD/.codex`
+- sets `http_proxy` / `https_proxy` to `http://127.0.0.1:9091`
+- scopes visible threads to the launch directory
+- uses the bundled Serena MCP wrapper for pyright compatibility and symbol-tool readiness probing
+- starts the local built `codexUI` instead of `npx`
+
+Relevant bundled files:
+
+- `scripts/codexapp-current-dir.sh`
+- `scripts/serena-mcp-wrapper.py`
+- `scripts/serena-python-bootstrap/sitecustomize.py`
+
 ### Linux 🐧
 ```bash
 node -v   # should be 18+

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, mkdir, stat, cp, lstat, readlink, symlink } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -137,6 +137,20 @@ function trimThreadTurnsInRpcResult(method: string, result: unknown): unknown {
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (payload instanceof Error && payload.message.trim().length > 0) {
     return payload.message
+  }
+
+  const aggregateCandidate = payload as { errors?: unknown[]; message?: string } | null
+  if (aggregateCandidate && Array.isArray(aggregateCandidate.errors)) {
+    const nestedMessages = aggregateCandidate.errors
+      .map((item: unknown) => getErrorMessage(item, ''))
+      .map((item: string) => item.trim())
+      .filter((item: string) => item.length > 0)
+    if (nestedMessages.length > 0) {
+      return nestedMessages.join('; ')
+    }
+    if (typeof aggregateCandidate.message === 'string' && aggregateCandidate.message.trim().length > 0) {
+      return aggregateCandidate.message
+    }
   }
 
   const record = asRecord(payload)
@@ -363,6 +377,29 @@ function extractThreadMessageText(threadReadPayload: unknown): string {
         const output = typeof itemRecord?.aggregatedOutput === 'string' ? itemRecord.aggregatedOutput.trim() : ''
         if (command) parts.push(command)
         if (output) parts.push(output)
+        continue
+      }
+      if (type === 'mcpToolCall') {
+        const server = typeof itemRecord?.server === 'string' ? itemRecord.server.trim() : ''
+        const tool = typeof itemRecord?.tool === 'string' ? itemRecord.tool.trim() : ''
+        const qualified = [server, tool].filter(Boolean).join('.')
+        const result = itemRecord?.result
+        const error = itemRecord?.error
+        if (qualified) parts.push(qualified)
+        if (result !== undefined && result !== null) {
+          try {
+            parts.push(JSON.stringify(result, null, 2))
+          } catch {
+            parts.push(String(result))
+          }
+        }
+        if (error !== undefined && error !== null) {
+          try {
+            parts.push(JSON.stringify(error, null, 2))
+          } catch {
+            parts.push(String(error))
+          }
+        }
       }
     }
   }
@@ -1121,6 +1158,112 @@ async function writeWorkspaceRootsState(nextState: WorkspaceRootsState): Promise
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
+function getScopedLaunchRoot(): string {
+  const raw = typeof process.env.CODEXUI_LAUNCH_SCOPE === 'string' ? process.env.CODEXUI_LAUNCH_SCOPE.trim() : ''
+  if (!raw) return ''
+  return isAbsolute(raw) ? resolve(raw) : resolve(raw)
+}
+
+function getSerenaMcpWrapperCommand(): string {
+  const explicit = typeof process.env.CODEXUI_SERENA_MCP_COMMAND === 'string' ? process.env.CODEXUI_SERENA_MCP_COMMAND.trim() : ''
+  if (explicit) {
+    return isAbsolute(explicit) ? resolve(explicit) : resolve(explicit)
+  }
+
+  const repoRoot = typeof process.env.CODEXUI_REPO_ROOT === 'string' ? process.env.CODEXUI_REPO_ROOT.trim() : ''
+  if (repoRoot) {
+    const repoCandidate = resolve(repoRoot, 'scripts', 'serena-mcp-wrapper.py')
+    if (existsSync(repoCandidate)) return repoCandidate
+  }
+
+  const scopeRoot = getScopedLaunchRoot()
+  if (!scopeRoot) return ''
+
+  const candidate = resolve(scopeRoot, 'tools', 'serena-mcp-wrapper.py')
+  return existsSync(candidate) ? candidate : ''
+}
+
+function isPathWithinLaunchScope(value: unknown, scopeRoot = getScopedLaunchRoot()): boolean {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!scopeRoot) return true
+  if (!raw) return false
+  const normalized = isAbsolute(raw) ? resolve(raw) : resolve(raw)
+  return normalized === scopeRoot
+    || normalized.startsWith(`${scopeRoot}/`)
+    || normalized.startsWith(`${scopeRoot}\\`)
+}
+
+function filterScopedThreadRows<T>(rows: T[], scopeRoot = getScopedLaunchRoot()): T[] {
+  if (!scopeRoot) return rows
+  return rows.filter((row) => {
+    const record = asRecord(row)
+    return isPathWithinLaunchScope(readNonEmptyString(record?.cwd), scopeRoot)
+  })
+}
+
+function filterThreadTitleCacheByIds(cache: ThreadTitleCache, allowedIds: Set<string> | null): ThreadTitleCache {
+  if (!allowedIds) return cache
+
+  const titles: Record<string, string> = {}
+  const order: string[] = []
+  for (const id of cache.order) {
+    if (!allowedIds.has(id)) continue
+    const title = cache.titles[id]
+    if (!title) continue
+    titles[id] = title
+    order.push(id)
+  }
+
+  return { titles, order }
+}
+
+async function collectScopedThreadIds(appServer: AppServerProcess): Promise<Set<string> | null> {
+  const scopeRoot = getScopedLaunchRoot()
+  if (!scopeRoot) return null
+
+  const allowedIds = new Set<string>()
+  let cursor: string | null = null
+  do {
+    const response = asRecord(await appServer.rpc('thread/list', {
+      archived: false,
+      limit: 100,
+      sortKey: 'updated_at',
+      cursor,
+    }))
+    const data = filterScopedThreadRows(Array.isArray(response?.data) ? response.data : [], scopeRoot)
+    for (const row of data) {
+      const record = asRecord(row)
+      const id = typeof record?.id === 'string' ? record.id : ''
+      if (id) {
+        allowedIds.add(id)
+      }
+    }
+    cursor = typeof response?.nextCursor === 'string' && response.nextCursor.length > 0 ? response.nextCursor : null
+  } while (cursor)
+
+  return allowedIds
+}
+
+async function filterScopedRpcResult(appServer: AppServerProcess, method: string, result: unknown): Promise<unknown> {
+  const scopeRoot = getScopedLaunchRoot()
+  if (!scopeRoot) return result
+
+  const record = asRecord(result)
+  if (method === 'thread/list') {
+    const data = filterScopedThreadRows(Array.isArray(record?.data) ? record.data : [], scopeRoot)
+    return { ...record, data }
+  }
+
+  if (THREAD_METHODS_WITH_TURNS.has(method)) {
+    const thread = asRecord(record?.thread)
+    if (thread && !isPathWithinLaunchScope(readNonEmptyString(thread?.cwd), scopeRoot)) {
+      throw new Error(`Thread is outside launch scope: ${scopeRoot}`)
+    }
+  }
+
+  return result
+}
+
 function normalizeTelegramBridgeConfig(value: unknown): TelegramBridgeConfigState {
   const record = asRecord(value)
   if (!record) return { botToken: '', chatIds: [] }
@@ -1268,6 +1411,7 @@ function httpPost(
 }
 
 let curlImpersonateAvailable: boolean | null = null
+let curlAvailable: boolean | null = null
 
 function curlImpersonatePost(
   url: string,
@@ -1305,6 +1449,49 @@ function curlImpersonatePost(
   })
 }
 
+function curlPost(
+  url: string,
+  headers: Record<string, string | number>,
+  body: Buffer,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const args = ['-s', '-w', '\n%{http_code}', '-X', 'POST', url]
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() === 'content-length') continue
+      args.push('-H', `${k}: ${String(v)}`)
+    }
+    args.push('--data-binary', '@-')
+    const proc = spawn('curl', args, {
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    proc.stdout.on('data', (c: Buffer) => stdoutChunks.push(c))
+    proc.stderr.on('data', (c: Buffer) => stderrChunks.push(c))
+    proc.on('error', (error) => {
+      curlAvailable = false
+      reject(error)
+    })
+    proc.on('close', (code) => {
+      const raw = Buffer.concat(stdoutChunks).toString('utf8')
+      const lastNewline = raw.lastIndexOf('\n')
+      const statusStr = lastNewline >= 0 ? raw.slice(lastNewline + 1).trim() : ''
+      const responseBody = lastNewline >= 0 ? raw.slice(0, lastNewline) : raw
+      const status = parseInt(statusStr, 10) || (code === 0 ? 200 : 500)
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim()
+      curlAvailable = true
+      if (code !== 0 && !responseBody && stderr) {
+        reject(new Error(stderr))
+        return
+      }
+      resolve({ status, body: responseBody || (stderr ? JSON.stringify({ error: stderr }) : '') })
+    })
+    proc.stdin.write(body)
+    proc.stdin.end()
+  })
+}
+
 async function proxyTranscribe(
   body: Buffer,
   contentType: string,
@@ -1320,15 +1507,27 @@ async function proxyTranscribe(
   }
   if (accountId) chatgptHeaders['ChatGPT-Account-Id'] = accountId
 
-  const postFn = curlImpersonateAvailable !== false ? curlImpersonatePost : httpPost
+  const postFn = curlImpersonateAvailable !== false
+    ? curlImpersonatePost
+    : curlAvailable !== false
+      ? curlPost
+      : httpPost
   let result: { status: number; body: string }
   try {
     result = await postFn('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
   } catch {
-    result = await httpPost('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
+    if (postFn !== curlPost && curlAvailable !== false) {
+      try {
+        result = await curlPost('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
+      } catch {
+        result = await httpPost('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
+      }
+    } else {
+      result = await httpPost('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
+    }
   }
 
-  if (result.status === 403 && result.body.includes('cf_chl')) {
+  if (result.status === 403 && (result.body.includes('cf_chl') || result.body.includes('cf-mitigated'))) {
     if (curlImpersonateAvailable !== false && postFn !== curlImpersonatePost) {
       try {
         const ciResult = await curlImpersonatePost('https://chatgpt.com/backend-api/transcribe', chatgptHeaders, body)
@@ -1351,13 +1550,22 @@ class AppServerProcess {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
-  private readonly appServerArgs = [
-    'app-server',
-    '-c',
-    'approval_policy="never"',
-    '-c',
-    'sandbox_mode="danger-full-access"',
-  ]
+  private getAppServerArgs(): string[] {
+    const args = [
+      'app-server',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'sandbox_mode="danger-full-access"',
+    ]
+
+    const serenaMcpWrapperCommand = getSerenaMcpWrapperCommand()
+    if (serenaMcpWrapperCommand) {
+      args.push('-c', `mcp_servers.serena.command=${JSON.stringify(serenaMcpWrapperCommand)}`)
+    }
+
+    return args
+  }
 
   private getCodexCommand(): string {
     const codexCommand = resolveCodexCommand()
@@ -1371,7 +1579,7 @@ class AppServerProcess {
     if (this.process) return
 
     this.stopping = false
-    const invocation = getSpawnInvocation(this.getCodexCommand(), this.appServerArgs)
+    const invocation = getSpawnInvocation(this.getCodexCommand(), this.getAppServerArgs())
     const proc = spawn(invocation.command, invocation.args, { stdio: ['pipe', 'pipe', 'pipe'] })
     this.process = proc
 
@@ -1824,7 +2032,7 @@ async function loadAllThreadsForSearch(appServer: AppServerProcess): Promise<Thr
       sortKey: 'updated_at',
       cursor,
     }))
-    const data = Array.isArray(response?.data) ? response.data : []
+    const data = filterScopedThreadRows(Array.isArray(response?.data) ? response.data : [])
     for (const row of data) {
       const record = asRecord(row)
       const id = typeof record?.id === 'string' ? record.id : ''
@@ -1945,7 +2153,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
         const rpcResult = await appServer.rpc(body.method, body.params ?? null)
         const result = trimThreadTurnsInRpcResult(body.method, rpcResult)
-        setJson(res, 200, { result })
+        const scopedResult = await filterScopedRpcResult(appServer, body.method, result)
+        setJson(res, 200, { result: scopedResult })
         return
       }
 
@@ -2290,7 +2499,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/thread-titles') {
         const cache = await readMergedThreadTitleCache()
-        setJson(res, 200, { data: cache })
+        const allowedIds = await collectScopedThreadIds(appServer)
+        setJson(res, 200, { data: filterThreadTitleCacheByIds(cache, allowedIds) })
         return
       }
 
