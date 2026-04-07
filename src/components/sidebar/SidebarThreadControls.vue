@@ -56,4 +56,14 @@ defineEmits<{
 .sidebar-thread-controls-icon {
   @apply w-4 h-4;
 }
+
+@media (max-width: 639px) {
+  .sidebar-thread-controls {
+    @apply gap-1.5;
+  }
+
+  .sidebar-thread-controls-button {
+    @apply h-6.5 w-6.5;
+  }
+}
 </style>

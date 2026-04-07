@@ -120,14 +120,18 @@
           :disabled="isInteractionDisabled"
           @input="onInputChange"
           @keydown="onInputKeydown"
+          @compositionstart="onInputCompositionStart"
+          @compositionend="onInputCompositionEnd"
+          @blur="onInputBlur"
           @paste="onInputPaste"
         />
         <ComposerSkillPicker
-          :skills="skillOptions"
+          :skills="menuOptions"
           :visible="isSlashMenuOpen"
           :anchor-bottom="44"
           :anchor-left="0"
-          @select="onSlashSkillSelect"
+          :search-placeholder="menuSearchPlaceholder"
+          @select="onMenuOptionSelect"
           @close="closeSlashMenu"
         />
       </div>
@@ -136,114 +140,115 @@
         class="thread-composer-controls"
         :class="{ 'thread-composer-controls--recording': isDictationRecording }"
       >
-        <div ref="attachMenuRootRef" class="thread-composer-attach">
-          <button
-            class="thread-composer-attach-trigger"
-            type="button"
-            aria-label="Add photos & files"
-            :disabled="isInteractionDisabled"
-            @click="toggleAttachMenu"
-          >
-            +
-          </button>
+        <div v-if="!isDictationRecording" class="thread-composer-primary-controls">
+          <div ref="attachMenuRootRef" class="thread-composer-attach">
+            <button
+              class="thread-composer-attach-trigger"
+              type="button"
+              aria-label="Add photos & files"
+              :disabled="isInteractionDisabled"
+              @click="toggleAttachMenu"
+            >
+              +
+            </button>
 
-          <div v-if="isAttachMenuOpen" class="thread-composer-attach-menu">
-            <button
-              class="thread-composer-attach-item"
-              type="button"
-              :disabled="isInteractionDisabled"
-              @click="triggerPhotoLibrary"
-            >
-              Add photos & files
-            </button>
-            <button
-              class="thread-composer-attach-item"
-              type="button"
-              :disabled="isInteractionDisabled"
-              @click="triggerFolderPicker"
-            >
-              Add folder
-            </button>
-            <button
-              class="thread-composer-attach-item"
-              type="button"
-              :disabled="isInteractionDisabled"
-              @click="triggerCameraCapture"
-            >
-              Take photo
-            </button>
-            <div class="thread-composer-attach-separator" />
-            <div class="thread-composer-attach-mode">
-              <span class="thread-composer-attach-mode-label">In-progress send</span>
-              <div class="thread-composer-attach-mode-buttons">
-                <button
-                  class="thread-composer-attach-mode-button"
-                  :class="{ 'is-active': activeInProgressMode === 'steer' }"
-                  type="button"
-                  :disabled="isInteractionDisabled"
-                  @click="setActiveInProgressMode('steer')"
-                >
-                  Steer
-                </button>
-                <button
-                  class="thread-composer-attach-mode-button"
-                  :class="{ 'is-active': activeInProgressMode === 'queue' }"
-                  type="button"
-                  :disabled="isInteractionDisabled"
-                  @click="setActiveInProgressMode('queue')"
-                >
-                  Queue
-                </button>
+            <div v-if="isAttachMenuOpen" class="thread-composer-attach-menu">
+              <button
+                class="thread-composer-attach-item"
+                type="button"
+                :disabled="isInteractionDisabled"
+                @click="triggerPhotoLibrary"
+              >
+                Add photos & files
+              </button>
+              <button
+                class="thread-composer-attach-item"
+                type="button"
+                :disabled="isInteractionDisabled"
+                @click="triggerFolderPicker"
+              >
+                Add folder
+              </button>
+              <button
+                class="thread-composer-attach-item"
+                type="button"
+                :disabled="isInteractionDisabled"
+                @click="triggerCameraCapture"
+              >
+                Take photo
+              </button>
+              <div class="thread-composer-attach-separator" />
+              <div class="thread-composer-attach-mode">
+                <span class="thread-composer-attach-mode-label">In-progress send</span>
+                <div class="thread-composer-attach-mode-buttons">
+                  <button
+                    class="thread-composer-attach-mode-button"
+                    :class="{ 'is-active': activeInProgressMode === 'steer' }"
+                    type="button"
+                    :disabled="isInteractionDisabled"
+                    @click="setActiveInProgressMode('steer')"
+                  >
+                    Steer
+                  </button>
+                  <button
+                    class="thread-composer-attach-mode-button"
+                    :class="{ 'is-active': activeInProgressMode === 'queue' }"
+                    type="button"
+                    :disabled="isInteractionDisabled"
+                    @click="setActiveInProgressMode('queue')"
+                  >
+                    Queue
+                  </button>
+                </div>
               </div>
+              <div class="thread-composer-attach-separator" />
+              <button
+                v-if="isFastModeSupported"
+                class="thread-composer-attach-setting"
+                type="button"
+                role="switch"
+                :aria-checked="selectedSpeedMode === 'fast'"
+                :aria-label="`Fast mode ${selectedSpeedMode === 'fast' ? 'enabled' : 'disabled'}`"
+                :disabled="isSpeedToggleDisabled"
+                @click="onToggleSpeedMode"
+              >
+                <span class="thread-composer-attach-setting-copy">
+                  <span class="thread-composer-attach-setting-label">Fast mode</span>
+                  <span class="thread-composer-attach-setting-description">{{ speedModeDescription }}</span>
+                </span>
+                <span
+                  class="thread-composer-attach-switch"
+                  :class="{
+                    'is-on': selectedSpeedMode === 'fast',
+                    'is-busy': isUpdatingSpeedMode,
+                    'is-disabled': isSpeedToggleDisabled,
+                  }"
+                />
+              </button>
+              <button
+                class="thread-composer-attach-setting"
+                type="button"
+                role="switch"
+                :aria-checked="isPlanModeSelected"
+                :aria-label="isPlanModeSelected ? 'Disable plan mode' : 'Enable plan mode'"
+                :disabled="disabled || !activeThreadId || isTurnInProgress"
+                @click="toggleCollaborationMode"
+              >
+                <span class="thread-composer-attach-setting-copy">
+                  <span class="thread-composer-attach-setting-label">Plan mode</span>
+                  <span class="thread-composer-attach-setting-description">Agent proposes a plan before acting</span>
+                </span>
+                <span
+                  class="thread-composer-attach-switch"
+                  :class="{ 'is-on': isPlanModeSelected }"
+                />
+              </button>
             </div>
-            <div class="thread-composer-attach-separator" />
-            <button
-              v-if="isFastModeSupported"
-              class="thread-composer-attach-setting"
-              type="button"
-              role="switch"
-              :aria-checked="selectedSpeedMode === 'fast'"
-              :aria-label="`Fast mode ${selectedSpeedMode === 'fast' ? 'enabled' : 'disabled'}`"
-              :disabled="isSpeedToggleDisabled"
-              @click="onToggleSpeedMode"
-            >
-              <span class="thread-composer-attach-setting-copy">
-                <span class="thread-composer-attach-setting-label">Fast mode</span>
-                <span class="thread-composer-attach-setting-description">{{ speedModeDescription }}</span>
-              </span>
-              <span
-                class="thread-composer-attach-switch"
-                :class="{
-                  'is-on': selectedSpeedMode === 'fast',
-                  'is-busy': isUpdatingSpeedMode,
-                  'is-disabled': isSpeedToggleDisabled,
-                }"
-              />
-            </button>
-            <button
-              class="thread-composer-attach-setting"
-              type="button"
-              role="switch"
-              :aria-checked="isPlanModeSelected"
-              :aria-label="isPlanModeSelected ? 'Disable plan mode' : 'Enable plan mode'"
-              :disabled="disabled || !activeThreadId || isTurnInProgress"
-              @click="toggleCollaborationMode"
-            >
-              <span class="thread-composer-attach-setting-copy">
-                <span class="thread-composer-attach-setting-label">Plan mode</span>
-                <span class="thread-composer-attach-setting-description">Agent proposes a plan before acting</span>
-              </span>
-              <span
-                class="thread-composer-attach-switch"
-                :class="{ 'is-on': isPlanModeSelected }"
-              />
-            </button>
           </div>
-        </div>
 
-        <template v-if="!isDictationRecording">
           <ComposerDropdown
-            class="thread-composer-control"
+            ref="modelDropdownRef"
+            class="thread-composer-control thread-composer-control--model"
             :model-value="selectedModel"
             :options="modelOptions"
             :selected-prefix-icon="showFastModeModelIcon ? IconTablerBolt : null"
@@ -253,19 +258,8 @@
             @update:model-value="onModelSelect"
           />
 
-          <ComposerSearchDropdown
-            class="thread-composer-control"
-            :options="skillDropdownOptions"
-            :selected-values="selectedSkillPaths"
-            placeholder="Skills"
-            search-placeholder="Search skills..."
-            open-direction="up"
-            :disabled="disabled || !activeThreadId || isTurnInProgress"
-            @toggle="onSkillDropdownToggle"
-          />
-
           <ComposerDropdown
-            class="thread-composer-control"
+            class="thread-composer-control thread-composer-control--reasoning"
             :model-value="selectedReasoningEffort"
             :options="reasoningOptions"
             placeholder="Thinking"
@@ -273,7 +267,31 @@
             :disabled="disabled || !activeThreadId || isTurnInProgress"
             @update:model-value="onReasoningEffortSelect"
           />
-        </template>
+
+          <button
+            v-if="showCompactButton"
+            class="thread-composer-command-button"
+            type="button"
+            :disabled="disabled || !activeThreadId || isTurnInProgress"
+            aria-label="Compact thread context"
+            :title="compactButtonTitle"
+            @click="emit('compact')"
+          >
+            Compact
+          </button>
+
+          <span
+            v-if="contextUsageSummaryText"
+            class="thread-composer-context-badge"
+            :class="{
+              'is-warning': contextUsageTone === 'warning',
+              'is-danger': contextUsageTone === 'danger',
+            }"
+            :title="contextUsageTooltipText"
+          >
+            {{ contextUsageSummaryText }}
+          </span>
+        </div>
 
         <div
           class="thread-composer-actions"
@@ -387,10 +405,28 @@ import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
-import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
 import ComposerSkillPicker from './ComposerSkillPicker.vue'
 
 type SkillItem = { name: string; description: string; path: string }
+export type ThreadComposerSlashCommand =
+  | 'fork'
+  | 'mcp'
+  | 'resume'
+  | 'review'
+  | 'status'
+
+type SlashCommandId =
+  | 'collab'
+  | 'compact'
+  | 'fork'
+  | 'mcp'
+  | 'model'
+  | 'plan'
+  | 'resume'
+  | 'review'
+  | 'status'
+
+type SlashCommandOption = { name: string; description: string; path: SlashCommandId }
 
 const props = defineProps<{
   activeThreadId: string
@@ -409,6 +445,7 @@ const props = defineProps<{
   isUpdatingSpeedMode?: boolean
   disabled?: boolean
   hasQueueAbove?: boolean
+  showCompact?: boolean
   sendWithEnter?: boolean
   inProgressSubmitMode?: 'steer' | 'queue'
   dictationClickToToggle?: boolean
@@ -440,7 +477,9 @@ export type ThreadComposerExposed = {
 
 const emit = defineEmits<{
   submit: [payload: SubmitPayload]
+  compact: []
   interrupt: []
+  'slash-command': [command: ThreadComposerSlashCommand]
   'update:selected-collaboration-mode': [mode: CollaborationModeKind]
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
@@ -462,6 +501,11 @@ type FolderUploadGroup = {
   isUploading: boolean
 }
 
+type DropdownExposed = {
+  openMenu: () => void
+  closeMenu: () => void
+}
+
 type AttachmentBatchStats = {
   total: number
   succeeded: number
@@ -469,6 +513,8 @@ type AttachmentBatchStats = {
 }
 
 const CONTEXT_WINDOW_BASELINE_TOKENS = 12000
+const DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
+const DEFAULT_AUTO_COMPACT_PERCENT = 90
 const PASTED_TEXT_FILE_THRESHOLD = 2000
 
 const draft = ref('')
@@ -520,9 +566,12 @@ const photoLibraryInputRef = ref<HTMLInputElement | null>(null)
 const cameraCaptureInputRef = ref<HTMLInputElement | null>(null)
 const folderPickerInputRef = ref<HTMLInputElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const modelDropdownRef = ref<DropdownExposed | null>(null)
 const { isMobile } = useMobile()
 const isAttachMenuOpen = ref(false)
 const isSlashMenuOpen = ref(false)
+const menuMode = ref<'slash' | 'skill' | null>(null)
+const isImeComposing = ref(false)
 const mentionStartIndex = ref<number | null>(null)
 const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
@@ -560,13 +609,68 @@ const isPlanModeWaitingForModel = computed(() =>
 )
 
 const skillOptions = computed<SkillItem[]>(() => props.skills ?? [])
-const selectedSkillPaths = computed(() => selectedSkills.value.map((s) => s.path))
-const skillDropdownOptions = computed(() =>
-  (props.skills ?? []).map((s) => ({
-    value: s.path,
-    label: s.name,
-    description: s.description,
-  })),
+const slashCommandOptions = computed<SlashCommandOption[]>(() => {
+  const options: SlashCommandOption[] = []
+  if (showCompactButton.value) {
+    options.push({
+      name: '/compact',
+      description: 'Summarize earlier messages to free context',
+      path: 'compact',
+    })
+  }
+  if (hasSelectedThreadContext.value) {
+    options.push({
+      name: '/review',
+      description: 'Review the current thread workspace changes',
+      path: 'review',
+    })
+    options.push({
+      name: '/fork',
+      description: 'Fork the current chat',
+      path: 'fork',
+    })
+  }
+  options.push({
+    name: '/resume',
+    description: 'Resume a stored session',
+    path: 'resume',
+  })
+  if (canUseGlobalSlashControls.value && props.models.length > 0) {
+    options.push({
+      name: '/model',
+      description: 'Choose what model and reasoning effort to use',
+      path: 'model',
+    })
+  }
+  if (canUseGlobalSlashControls.value) {
+    options.push({
+      name: '/plan',
+      description: 'Switch to Plan mode',
+      path: 'plan',
+    })
+    options.push({
+      name: '/collab',
+      description: 'Change collaboration mode',
+      path: 'collab',
+    })
+  }
+  options.push({
+    name: '/status',
+    description: 'Show current session configuration and token usage',
+    path: 'status',
+  })
+  options.push({
+    name: '/mcp',
+    description: 'List configured MCP tools',
+    path: 'mcp',
+  })
+  return options
+})
+const menuOptions = computed(() =>
+  menuMode.value === 'slash' ? slashCommandOptions.value : skillOptions.value,
+)
+const menuSearchPlaceholder = computed(() =>
+  menuMode.value === 'slash' ? 'Search commands...' : 'Search skills...',
 )
 
 const canSubmit = computed(() => {
@@ -598,6 +702,18 @@ const showFastModeModelIcon = computed(() =>
 )
 const isSpeedToggleDisabled = computed(() =>
   isInteractionDisabled.value || props.isUpdatingSpeedMode === true,
+)
+const showCompactButton = computed(() => props.showCompact === true)
+const hasSelectedThreadContext = computed(() =>
+  showCompactButton.value && props.activeThreadId.trim().length > 0,
+)
+const canUseGlobalSlashControls = computed(() =>
+  !props.disabled && props.activeThreadId.trim().length > 0,
+)
+const compactButtonTitle = computed(() =>
+  props.isTurnInProgress
+    ? 'Compact is unavailable while a turn is running'
+    : 'Summarize earlier messages to free context',
 )
 const speedModeDescription = computed(() => {
   if (props.isUpdatingSpeedMode) {
@@ -652,9 +768,11 @@ const dictationDurationLabel = computed(() => {
 const placeholderText = computed(() =>
   !props.activeThreadId
     ? 'Select a thread to send a message'
-    : isPlanModeWaitingForModel.value
+      : isPlanModeWaitingForModel.value
       ? 'Loading models for plan mode...'
-      : 'Type a message... (@ for files, / for skills)',
+      : isMobile.value
+        ? 'Message... (@ files, / commands, $ skills)'
+        : 'Type a message... (@ for files, / for commands, $ for skills)',
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
@@ -665,7 +783,6 @@ const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?
 const contextUsageView = computed(() => buildContextUsageView(props.threadTokenUsage ?? null))
 const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
 const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
-const contextUsageRemainingPercent = computed(() => contextUsageView.value?.percentRemaining ?? 0)
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
 
 function formatPlanType(planType: string | null | undefined): string {
@@ -848,12 +965,19 @@ function calculateContextPercentRemaining(tokensInContext: number, contextWindow
   return Math.max(0, Math.min(100, Math.round((remaining / effectiveWindow) * 100)))
 }
 
+function inferAutoCompactTokenLimit(contextWindow: number): number {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return 0
+  }
+  const inferred = Math.round((contextWindow * DEFAULT_AUTO_COMPACT_PERCENT) / DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT)
+  return Math.max(1, Math.min(contextWindow, inferred))
+}
+
 function buildContextUsageView(
   usage: UiThreadTokenUsage | null,
 ): {
     summaryText: string
     tooltipText: string
-    percentRemaining: number
     tone: 'healthy' | 'warning' | 'danger'
   } | null {
   if (!usage) return null
@@ -862,7 +986,8 @@ function buildContextUsageView(
   if (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0) return null
 
   const tokensInContext = Math.max(0, usage.last.totalTokens)
-  const percentRemaining = calculateContextPercentRemaining(tokensInContext, contextWindow)
+  const autoCompactLimit = inferAutoCompactTokenLimit(contextWindow)
+  const percentRemaining = calculateContextPercentRemaining(tokensInContext, autoCompactLimit)
   const percentUsed = Math.max(0, Math.min(100, 100 - percentRemaining))
   const tone: 'healthy' | 'warning' | 'danger' = percentRemaining <= 15
     ? 'danger'
@@ -871,19 +996,23 @@ function buildContextUsageView(
       : 'healthy'
 
   return {
-    summaryText: `${percentRemaining}% · ${formatCompactTokenCount(tokensInContext)} / ${formatCompactTokenCount(contextWindow)}`,
+    summaryText: `${percentRemaining}%`,
     tooltipText: [
-      `Context window: ${percentRemaining}% left (${percentUsed}% used)`,
-      `In context: ${tokensInContext.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`,
+      `Before auto-compact: ${percentRemaining}% left (${percentUsed}% used)`,
+      `Current context: ${tokensInContext.toLocaleString()} / ${autoCompactLimit.toLocaleString()} tokens`,
+      `Model context window event: ${contextWindow.toLocaleString()} tokens`,
+      'Auto-compact trigger is inferred from Codex defaults when an explicit threshold is unavailable.',
       `Last turn: ${formatBreakdownSummary(usage.last)}`,
       `Session total: ${formatBreakdownSummary(usage.total)}`,
     ].join('\n'),
-    percentRemaining,
     tone,
   }
 }
 
 function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
+  if (tryExecuteSlashCommand()) {
+    return
+  }
   const text = draft.value.trim()
   if (!canSubmit.value) return
   emit('submit', {
@@ -1035,6 +1164,15 @@ function onModelSelect(value: string): void {
 
 function toggleCollaborationMode(): void {
   emit('update:selected-collaboration-mode', isPlanModeSelected.value ? 'default' : 'plan')
+}
+
+function openModelPicker(): void {
+  modelDropdownRef.value?.openMenu()
+}
+
+function openCollaborationMenu(): void {
+  if (isInteractionDisabled.value) return
+  isAttachMenuOpen.value = true
 }
 
 function onReasoningEffortSelect(value: string): void {
@@ -1481,14 +1619,66 @@ function onInputChange(): void {
     dictationFeedback.value = ''
   }
   const text = draft.value
-  const shouldShowSlashMenu = text.startsWith('/')
+  const nextMenuMode = text.startsWith('$')
+    ? 'skill'
+    : text.startsWith('/')
+      ? 'slash'
+      : null
+  if (nextMenuMode !== menuMode.value) {
+    menuMode.value = nextMenuMode
+  }
+  const shouldShowSlashMenu = nextMenuMode !== null
   if (shouldShowSlashMenu !== isSlashMenuOpen.value) {
     isSlashMenuOpen.value = shouldShowSlashMenu
   }
   updateFileMentionState()
 }
 
+function onInputCompositionStart(): void {
+  isImeComposing.value = true
+}
+
+function onInputCompositionEnd(): void {
+  isImeComposing.value = false
+}
+
+function onInputBlur(): void {
+  isImeComposing.value = false
+}
+
+function isImeConfirmEnter(event: KeyboardEvent): boolean {
+  if (event.key !== 'Enter') {
+    return false
+  }
+  return event.isComposing || isImeComposing.value || event.keyCode === 229
+}
+
+function resolveKeyboardSubmitMode(event: KeyboardEvent): 'steer' | 'queue' | null {
+  const shouldSteer = props.sendWithEnter !== false
+    ? event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
+    : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
+  if (shouldSteer) {
+    return 'steer'
+  }
+  const shouldQueue =
+    props.sendWithEnter !== false
+    && props.isTurnInProgress === true
+    && event.key === 'Tab'
+    && !event.shiftKey
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.altKey
+  if (shouldQueue) {
+    return 'queue'
+  }
+  return null
+}
+
 function onInputKeydown(event: KeyboardEvent): void {
+  if (isImeConfirmEnter(event)) {
+    return
+  }
+
   if (isFileMentionOpen.value) {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -1523,12 +1713,10 @@ function onInputKeydown(event: KeyboardEvent): void {
     }
   }
 
-  const shouldSend = props.sendWithEnter !== false
-    ? event.key === 'Enter' && !event.shiftKey
-    : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
-  if (shouldSend) {
+  const submitMode = resolveKeyboardSubmitMode(event)
+  if (submitMode !== null && canSubmit.value) {
     event.preventDefault()
-    onSubmit(props.isTurnInProgress ? activeInProgressMode.value : 'steer')
+    onSubmit(submitMode)
     return
   }
 
@@ -1547,6 +1735,7 @@ function onInputKeydown(event: KeyboardEvent): void {
 
 function closeSlashMenu(): void {
   isSlashMenuOpen.value = false
+  menuMode.value = null
   inputRef.value?.focus()
 }
 
@@ -1665,24 +1854,104 @@ function isMarkdownFile(path: string): boolean {
   return ext === 'md' || ext === 'mdx'
 }
 
-function onSlashSkillSelect(skill: SkillItem): void {
+function onMenuOptionSelect(option: SkillItem | SlashCommandOption): void {
+  if (menuMode.value === 'slash') {
+    executeSlashCommand(option.path)
+    return
+  }
+
+  const skill = option as SkillItem
   if (!selectedSkills.value.some((s) => s.path === skill.path)) {
     selectedSkills.value = [...selectedSkills.value, skill]
   }
-  draft.value = draft.value.startsWith('/') ? '' : draft.value
+  draft.value = draft.value.startsWith('$') ? '' : draft.value
   isSlashMenuOpen.value = false
+  menuMode.value = null
   inputRef.value?.focus()
 }
 
-function onSkillDropdownToggle(path: string, checked: boolean): void {
-  if (checked) {
-    const skill = (props.skills ?? []).find((s) => s.path === path)
-    if (skill && !selectedSkills.value.some((s) => s.path === path)) {
-      selectedSkills.value = [...selectedSkills.value, skill]
-    }
-  } else {
-    selectedSkills.value = selectedSkills.value.filter((s) => s.path !== path)
+function parseSlashCommand(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('/')) return null
+  const [command] = trimmed.slice(1).split(/\s+/, 1)
+  return command ? command.toLowerCase() : null
+}
+
+function clearSlashDraftState(): void {
+  if (props.activeThreadId) {
+    clearPersistedDraftForThread(props.activeThreadId)
   }
+  draft.value = ''
+  isSlashMenuOpen.value = false
+  menuMode.value = null
+}
+
+function executeSlashCommand(command: string): boolean {
+  if (command === 'compact') {
+    if (!showCompactButton.value || props.isTurnInProgress || props.disabled || !props.activeThreadId) return false
+    clearSlashDraftState()
+    emit('compact')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'review') {
+    if (!hasSelectedThreadContext.value) return false
+    clearSlashDraftState()
+    emit('slash-command', 'review')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'fork') {
+    if (!hasSelectedThreadContext.value) return false
+    clearSlashDraftState()
+    emit('slash-command', 'fork')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'resume') {
+    clearSlashDraftState()
+    emit('slash-command', 'resume')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'model') {
+    if (!canUseGlobalSlashControls.value || props.models.length === 0) return false
+    clearSlashDraftState()
+    openModelPicker()
+    return true
+  }
+  if (command === 'plan') {
+    if (!canUseGlobalSlashControls.value) return false
+    clearSlashDraftState()
+    emit('update:selected-collaboration-mode', 'plan')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'collab') {
+    if (!canUseGlobalSlashControls.value) return false
+    clearSlashDraftState()
+    openCollaborationMenu()
+    return true
+  }
+  if (command === 'status') {
+    clearSlashDraftState()
+    emit('slash-command', 'status')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  if (command === 'mcp') {
+    clearSlashDraftState()
+    emit('slash-command', 'mcp')
+    nextTick(() => inputRef.value?.focus())
+    return true
+  }
+  return false
+}
+
+function tryExecuteSlashCommand(): boolean {
+  const command = parseSlashCommand(draft.value)
+  if (!command) return false
+  return executeSlashCommand(command)
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -1895,6 +2164,18 @@ watch(
   background: var(--context-usage-accent);
 }
 
+.thread-composer-context-badge {
+  @apply inline-flex h-7 shrink-0 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-semibold tabular-nums text-emerald-700;
+}
+
+.thread-composer-context-badge.is-warning {
+  @apply border-amber-200 bg-amber-50 text-amber-700;
+}
+
+.thread-composer-context-badge.is-danger {
+  @apply border-rose-200 bg-rose-50 text-rose-700;
+}
+
 .thread-composer-input-wrap {
   @apply relative;
 }
@@ -1981,6 +2262,10 @@ watch(
 
 .thread-composer-controls--recording {
   @apply gap-1 sm:gap-2;
+}
+
+.thread-composer-primary-controls {
+  @apply min-w-0 flex flex-1 items-center gap-2 sm:gap-4;
 }
 
 .thread-composer-attach {
@@ -2072,6 +2357,9 @@ watch(
   @apply truncate;
 }
 
+.thread-composer-command-button {
+  @apply inline-flex h-7 shrink-0 items-center border-0 bg-transparent p-0 text-sm leading-none text-zinc-500 transition hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-400;
+}
 
 .thread-composer-actions {
   @apply ml-auto flex min-w-0 items-center gap-2;
@@ -2132,5 +2420,86 @@ watch(
 
 .thread-composer-hidden-input {
   @apply hidden;
+}
+
+@media (max-width: 639px) {
+  .thread-composer-shell {
+    @apply rounded-[1.35rem] px-1.5 py-1;
+  }
+
+  .thread-composer-input {
+    @apply min-h-8 max-h-24 px-0.5 py-1 text-[14px] leading-5;
+  }
+
+  .thread-composer-controls {
+    @apply mt-1 flex-wrap items-center gap-x-1 gap-y-1;
+  }
+
+  .thread-composer-primary-controls {
+    @apply w-full flex-wrap gap-1;
+  }
+
+  .thread-composer-attach {
+    @apply order-1;
+  }
+
+  .thread-composer-attach-trigger {
+    @apply h-8 w-8 rounded-full border border-zinc-200 bg-zinc-50 text-[22px];
+  }
+
+  .thread-composer-attach-menu {
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 10px);
+    width: auto;
+    max-width: none;
+  }
+
+  .thread-composer-control {
+    flex: 1 1 calc(50% - 0.25rem);
+    min-width: min(10rem, calc(50vw - 1rem));
+  }
+
+  .thread-composer-control--skills {
+    flex-basis: 100%;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown),
+  .thread-composer-control :deep(.search-dropdown) {
+    @apply flex w-full min-w-0;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown-trigger),
+  .thread-composer-control :deep(.search-dropdown-trigger) {
+    @apply h-8 w-full min-w-0 items-center justify-between rounded-full border border-zinc-200 bg-zinc-50 px-2.5 text-[13px] text-zinc-700;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown-value),
+  .thread-composer-control :deep(.search-dropdown-value) {
+    @apply min-w-0 truncate;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown-chevron),
+  .thread-composer-control :deep(.search-dropdown-chevron) {
+    @apply h-4 w-4;
+  }
+
+  .thread-composer-command-button {
+    @apply inline-flex h-7 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 text-[12px] font-medium text-zinc-700;
+  }
+
+  .thread-composer-context-badge {
+    @apply h-7 px-1.5 text-[11px];
+  }
+
+  .thread-composer-actions {
+    @apply ml-0 w-full justify-end gap-1 pt-0;
+  }
+
+  .thread-composer-mic,
+  .thread-composer-submit,
+  .thread-composer-stop {
+    @apply h-8 w-8;
+  }
 }
 </style>

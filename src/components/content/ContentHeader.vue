@@ -34,4 +34,19 @@ defineProps<{
 .content-leading {
   @apply flex items-center gap-1;
 }
+
+@media (max-width: 639px) {
+  .content-header {
+    @apply min-h-10 gap-1 px-2 pt-1.5 pb-1;
+  }
+
+  .content-title {
+    @apply text-[15px] font-semibold leading-5;
+  }
+
+  .content-leading,
+  .content-actions {
+    @apply shrink-0;
+  }
+}
 </style>

@@ -137,9 +137,39 @@ const filteredOptions = computed(() => {
   })
 })
 
+function positionMenuForMobile(): void {
+  const root = rootRef.value
+  if (!root || window.innerWidth >= 640) return
+
+  const menu = root.querySelector<HTMLElement>('.composer-dropdown-menu-wrap')
+  if (!menu) return
+
+  const rect = root.getBoundingClientRect()
+  if (openDirection.value === 'up') {
+    menu.style.setProperty('bottom', `${window.innerHeight - rect.top + 8}px`, 'important')
+    menu.style.setProperty('top', 'auto', 'important')
+    return
+  }
+
+  menu.style.setProperty('top', `${rect.bottom + 8}px`, 'important')
+  menu.style.setProperty('bottom', 'auto', 'important')
+}
+
 function onToggle(): void {
   if (props.disabled) return
   isOpen.value = !isOpen.value
+}
+
+function openMenu(): void {
+  if (props.disabled) return
+  isOpen.value = true
+}
+
+function closeMenu(): void {
+  isOpen.value = false
+  searchQuery.value = ''
+  isAdding.value = false
+  addDraft.value = ''
 }
 
 function onSelect(value: string): void {
@@ -205,8 +235,11 @@ watch(isOpen, (open) => {
     addDraft.value = ''
     return
   }
-  if (!enableSearch.value) return
-  nextTick(() => searchInputRef.value?.focus())
+  nextTick(() => {
+    positionMenuForMobile()
+    if (!enableSearch.value) return
+    searchInputRef.value?.focus()
+  })
 })
 
 onMounted(() => {
@@ -215,6 +248,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', onDocumentPointerDown)
+})
+
+defineExpose({
+  openMenu,
+  closeMenu,
 })
 </script>
 
@@ -303,5 +341,22 @@ onBeforeUnmount(() => {
 
 .composer-dropdown-add-btn {
   @apply rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-xs text-zinc-700 transition hover:bg-zinc-100;
+}
+
+@media (max-width: 639px) {
+  .composer-dropdown-menu-wrap {
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+  }
+
+  .composer-dropdown-menu-wrap-up {
+    bottom: auto !important;
+  }
+
+  .composer-dropdown-menu-wrap-down {
+    top: auto !important;
+  }
 }
 </style>

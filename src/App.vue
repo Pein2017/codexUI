@@ -200,6 +200,76 @@
                   <span class="sidebar-settings-context-meta">{{ threadContextSecondaryText }}</span>
                 </span>
               </div>
+              <div
+                class="sidebar-settings-section"
+                :class="{ 'is-highlighted': activeSettingsSection === 'status' }"
+              >
+                <div class="sidebar-settings-section-header">
+                  <span class="sidebar-settings-section-title">Session</span>
+                  <button
+                    class="sidebar-settings-section-action"
+                    type="button"
+                    :disabled="isSessionStatusLoading"
+                    @click="void loadSessionStatusOverview()"
+                  >
+                    {{ isSessionStatusLoading ? 'Loading…' : 'Reload' }}
+                  </button>
+                </div>
+                <div class="sidebar-settings-kv-grid">
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Model</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusModelText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Reasoning</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusReasoningText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Speed</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusSpeedText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Collab</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusCollabText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Approval</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusApprovalText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Sandbox</span>
+                    <span class="sidebar-settings-kv-value">{{ sessionStatusSandboxText }}</span>
+                  </div>
+                </div>
+              </div>
+              <div
+                class="sidebar-settings-section"
+                :class="{ 'is-highlighted': activeSettingsSection === 'mcp' }"
+              >
+                <div class="sidebar-settings-section-header">
+                  <span class="sidebar-settings-section-title">MCP</span>
+                  <button
+                    class="sidebar-settings-section-action"
+                    type="button"
+                    :disabled="isReloadingMcp"
+                    @click="onReloadMcp"
+                  >
+                    {{ isReloadingMcp ? 'Reloading…' : 'Reload' }}
+                  </button>
+                </div>
+                <p class="sidebar-settings-section-copy">
+                  {{ mcpSummaryText }}
+                </p>
+                <div v-if="sessionStatusOverview?.mcpServers.length" class="sidebar-settings-chip-list">
+                  <span
+                    v-for="serverName in sessionStatusOverview.mcpServers"
+                    :key="serverName"
+                    class="sidebar-settings-chip"
+                  >
+                    {{ serverName }}
+                  </span>
+                </div>
+              </div>
               <div class="sidebar-settings-rate-limits">
                 <RateLimitStatus :snapshots="accountRateLimitSnapshots" />
               </div>
@@ -449,11 +519,13 @@
                   :skills="installedSkills"
                   :thread-token-usage="selectedThreadTokenUsage"
                   :codex-quota="codexQuota"
+                  :show-compact="false"
                   :is-turn-in-progress="false"
                   :is-interrupting-turn="false" :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
                   @submit="onSubmitThreadMessage"
+                  @slash-command="onComposerSlashCommand"
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
                   @update:selected-reasoning-effort="onSelectReasoningEffort"
@@ -478,7 +550,9 @@
                     :live-overlay="liveOverlay"
                     :pending-requests="selectedThreadServerRequests"
                     @update-scroll-state="onUpdateThreadScrollState"
+                    @edit-message="onEditPastMessage"
                     @fork-thread="onForkThreadFromMessage"
+                    @open-thread="onOpenThreadFromConversation"
                     @rollback="onRollback"
                     @respond-server-request="onRespondServerRequest" />
                 </div>
@@ -509,12 +583,15 @@
                     :skills="installedSkills"
                     :thread-token-usage="selectedThreadTokenUsage"
                     :codex-quota="codexQuota"
+                    :show-compact="true"
                     :is-turn-in-progress="isSelectedThreadInProgress" :is-interrupting-turn="isInterruptingTurn"
                     :has-queue-above="selectedThreadQueuedMessages.length > 0"
                     :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
+                    @compact="onCompactThread"
+                    @slash-command="onComposerSlashCommand"
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
                     @update:selected-speed-mode="onSelectSpeedMode"
@@ -555,18 +632,20 @@ import {
   createLocalDirectory,
   getHomeDirectory,
   getProjectRootSuggestion,
+  getSessionStatusOverview,
   getTelegramStatus,
   getWorkspaceRootsState,
   listLocalDirectories,
   openProjectRoot,
+  reloadMcpServerConfig,
   removeAccount,
   refreshAccountsFromAuth,
   searchThreads,
   switchAccount,
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
-import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, TelegramStatus } from './api/codexGateway'
+import type { ComposerDraftPayload, ThreadComposerExposed, ThreadComposerSlashCommand } from './components/content/ThreadComposer.vue'
+import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, SessionStatusOverview, TelegramStatus } from './api/codexGateway'
 import { getPathLeafName, getPathParent, normalizePathForUi } from './pathUtils.js'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
@@ -758,7 +837,6 @@ const {
   steerQueuedMessage,
   setSelectedCollaborationMode,
   setSelectedModelId,
-
   setSelectedReasoningEffort,
   updateSelectedSpeedMode,
   respondToPendingServerRequest,
@@ -766,6 +844,7 @@ const {
   removeProject,
   reorderProject,
   pinProjectToTop,
+  compactSelectedThread,
   startPolling,
   stopPolling,
   primeSelectedThread,
@@ -802,6 +881,10 @@ const defaultNewProjectName = ref('New Project (1)')
 const homeDirectory = ref('')
 const isSettingsOpen = ref(false)
 const isReviewPaneOpen = ref(false)
+const activeSettingsSection = ref<'status' | 'mcp' | null>(null)
+const sessionStatusOverview = ref<SessionStatusOverview | null>(null)
+const isSessionStatusLoading = ref(false)
+const isReloadingMcp = ref(false)
 const createFolderInputRef = ref<HTMLInputElement | null>(null)
 const accounts = ref<UiAccountEntry[]>([])
 const isRefreshingAccounts = ref(false)
@@ -1082,6 +1165,30 @@ const telegramStatusText = computed(() => {
   const error = telegramStatus.value.lastError ? `, error: ${telegramStatus.value.lastError}` : ''
   return `${base}, ${mapped}${error}`
 })
+const sessionStatusModelText = computed(() =>
+  selectedModelId.value.trim() || sessionStatusOverview.value?.model || 'Default',
+)
+const sessionStatusReasoningText = computed(() => {
+  const value = selectedReasoningEffort.value || sessionStatusOverview.value?.reasoningEffort || ''
+  return value ? value : 'Default'
+})
+const sessionStatusSpeedText = computed(() =>
+  selectedSpeedMode.value === 'fast' ? 'Fast' : sessionStatusOverview.value?.speedMode === 'fast' ? 'Fast' : 'Standard',
+)
+const sessionStatusCollabText = computed(() =>
+  selectedCollaborationMode.value === 'plan' ? 'Plan' : 'Default',
+)
+const sessionStatusApprovalText = computed(() =>
+  sessionStatusOverview.value?.approvalPolicy || 'Unknown',
+)
+const sessionStatusSandboxText = computed(() =>
+  sessionStatusOverview.value?.sandboxMode || 'Unknown',
+)
+const mcpSummaryText = computed(() => {
+  const serverCount = sessionStatusOverview.value?.mcpServers.length ?? 0
+  if (serverCount === 0) return 'No MCP servers are currently configured.'
+  return `${serverCount} MCP server${serverCount === 1 ? '' : 's'} configured`
+})
 
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeyDown)
@@ -1161,6 +1268,14 @@ watch(accounts, () => {
   }, 1500)
 }, { deep: true })
 
+watch(isSettingsOpen, (open) => {
+  if (!open) {
+    activeSettingsSection.value = null
+    return
+  }
+  void loadSessionStatusOverview()
+})
+
 function onSkillsChanged(): void {
   void refreshSkills()
 }
@@ -1177,6 +1292,36 @@ async function refreshTelegramStatus(): Promise<void> {
       mappedThreads: 0,
       lastError: message,
     }
+  }
+}
+
+async function loadSessionStatusOverview(): Promise<void> {
+  if (isSessionStatusLoading.value) return
+  isSessionStatusLoading.value = true
+  try {
+    sessionStatusOverview.value = await getSessionStatusOverview()
+  } catch {
+    // Keep the settings panel usable even if config/read fails transiently.
+  } finally {
+    isSessionStatusLoading.value = false
+  }
+}
+
+function openSettingsSection(section: 'status' | 'mcp'): void {
+  activeSettingsSection.value = section
+  setSidebarCollapsed(false)
+  isSettingsOpen.value = true
+  void loadSessionStatusOverview()
+}
+
+async function onReloadMcp(): Promise<void> {
+  if (isReloadingMcp.value) return
+  isReloadingMcp.value = true
+  try {
+    await reloadMcpServerConfig()
+    await loadSessionStatusOverview()
+  } finally {
+    isReloadingMcp.value = false
   }
 }
 
@@ -1201,11 +1346,42 @@ function onSidebarSearchKeydown(event: KeyboardEvent): void {
   }
 }
 
+function openResumePicker(): void {
+  setSidebarCollapsed(false)
+  isSidebarSearchVisible.value = true
+  sidebarSearchQuery.value = ''
+  nextTick(() => sidebarSearchInputRef.value?.focus())
+}
+
 function onSelectThread(threadId: string): void {
   if (!threadId) return
   if (route.name === 'thread' && routeThreadId.value === threadId) return
   void router.push({ name: 'thread', params: { threadId } })
   if (isMobile.value) setSidebarCollapsed(true)
+}
+
+function onComposerSlashCommand(command: ThreadComposerSlashCommand): void {
+  if (command === 'review') {
+    if (!selectedThreadId.value) return
+    isReviewPaneOpen.value = true
+    return
+  }
+  if (command === 'fork') {
+    if (!selectedThreadId.value) return
+    void onForkThread(selectedThreadId.value)
+    return
+  }
+  if (command === 'resume') {
+    openResumePicker()
+    return
+  }
+  if (command === 'status') {
+    openSettingsSection('status')
+    return
+  }
+  if (command === 'mcp') {
+    openSettingsSection('mcp')
+  }
 }
 
 async function onExportThread(threadId: string): Promise<void> {
@@ -1557,6 +1733,16 @@ async function onForkThreadFromMessage(payload: { threadId: string; turnIndex: n
   if (isMobile.value) setSidebarCollapsed(true)
 }
 
+async function onOpenThreadFromConversation(payload: { threadId: string }): Promise<void> {
+  const threadId = payload.threadId?.trim()
+  if (!threadId) return
+  await router.push({ name: 'thread', params: { threadId } })
+  if (selectedThreadId.value !== threadId) {
+    await selectThread(threadId)
+  }
+  if (isMobile.value) setSidebarCollapsed(true)
+}
+
 function setSidebarCollapsed(nextValue: boolean): void {
   if (isSidebarCollapsed.value === nextValue) return
   isSidebarCollapsed.value = nextValue
@@ -1716,6 +1902,43 @@ function onEditQueuedMessage(messageId: string): void {
   }
   composer.hydrateDraft(payload)
   removeQueuedMessage(messageId)
+}
+
+async function onEditPastMessage(payload: { messageId: string }): Promise<void> {
+  if (isHomeRoute.value) return
+  const original = filteredMessages.value.find((message) => message.id === payload.messageId)
+  if (!original || original.role !== 'user' || original.messageType !== 'userMessage') return
+  const turnId = original.turnId?.trim() ?? ''
+  if (!turnId) return
+
+  const composer = threadComposerRef.value
+  if (!composer) {
+    window.alert('Cannot edit this message right now.')
+    return
+  }
+
+  if (composer.hasUnsavedDraft()) {
+    const shouldReplace = window.confirm('Replace the current draft with this earlier message for editing?')
+    if (!shouldReplace) return
+  }
+
+  const draftPayload: ComposerDraftPayload = {
+    text: original.text,
+    imageUrls: [...(original.images ?? [])],
+    fileAttachments: (original.fileAttachments ?? []).map((attachment) => ({
+      label: attachment.label,
+      path: attachment.path,
+      fsPath: attachment.path,
+    })),
+    skills: [],
+  }
+
+  editingQueuedMessageState.value = null
+  const didRollback = await rollbackSelectedThread(turnId)
+  if (!didRollback) return
+
+  await nextTick()
+  threadComposerRef.value?.hydrateDraft(draftPayload)
 }
 
 
@@ -2082,6 +2305,11 @@ function onInterruptTurn(): void {
   void interruptSelectedThreadTurn()
 }
 
+function onCompactThread(): void {
+  if (isHomeRoute.value) return
+  void compactSelectedThread().catch(() => {})
+}
+
 function onRollback(payload: { turnId: string }): void {
   void rollbackSelectedThread(payload.turnId)
 }
@@ -2136,6 +2364,30 @@ function buildThreadMarkdown(): string {
         lines.push(`exitCode: ${message.commandExecution.exitCode}`)
       }
       lines.push(message.commandExecution.aggregatedOutput || '(no output)')
+      lines.push('```')
+      lines.push('')
+    }
+
+    if (message.mcpToolCall) {
+      lines.push('```text')
+      lines.push(`mcp: ${[message.mcpToolCall.server, message.mcpToolCall.tool].filter(Boolean).join('.')}`)
+      lines.push(`status: ${message.mcpToolCall.status}`)
+      if (message.mcpToolCall.argumentsText) {
+        lines.push('arguments:')
+        lines.push(message.mcpToolCall.argumentsText)
+      }
+      if (message.mcpToolCall.progressText) {
+        lines.push('progress:')
+        lines.push(message.mcpToolCall.progressText)
+      }
+      if (message.mcpToolCall.resultText) {
+        lines.push('result:')
+        lines.push(message.mcpToolCall.resultText)
+      }
+      if (message.mcpToolCall.errorText) {
+        lines.push('error:')
+        lines.push(message.mcpToolCall.errorText)
+      }
       lines.push('```')
       lines.push('')
     }
@@ -2669,6 +2921,21 @@ async function submitFirstMessageForNewThread(
   @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800;
 }
 
+@media (max-width: 639px) {
+  .content-body {
+    @apply gap-0.5 pt-0 pb-0;
+  }
+
+  .composer-with-queue {
+    @apply px-1;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.125rem);
+  }
+
+  .content-header-review-button {
+    @apply px-2 py-1 text-[10px];
+  }
+}
+
 .new-thread-empty {
   @apply flex-1 min-h-0 flex flex-col items-center justify-center gap-0.5 px-3 sm:px-6;
 }
@@ -3150,6 +3417,54 @@ async function submitFirstMessageForNewThread(
 
 .sidebar-settings-context-meta {
   @apply block text-[11px] font-normal text-zinc-500;
+}
+
+.sidebar-settings-section {
+  @apply border-t border-zinc-100 px-3 py-3;
+}
+
+.sidebar-settings-section.is-highlighted {
+  @apply bg-amber-50/60;
+}
+
+.sidebar-settings-section-header {
+  @apply mb-2 flex items-center justify-between gap-2;
+}
+
+.sidebar-settings-section-title {
+  @apply text-sm font-medium text-zinc-800;
+}
+
+.sidebar-settings-section-action {
+  @apply shrink-0 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
+}
+
+.sidebar-settings-section-copy {
+  @apply text-xs text-zinc-500;
+}
+
+.sidebar-settings-kv-grid {
+  @apply mt-2 grid grid-cols-2 gap-2;
+}
+
+.sidebar-settings-kv-item {
+  @apply rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2;
+}
+
+.sidebar-settings-kv-label {
+  @apply block text-[11px] uppercase tracking-wide text-zinc-500;
+}
+
+.sidebar-settings-kv-value {
+  @apply mt-1 block break-words text-xs font-medium text-zinc-700;
+}
+
+.sidebar-settings-chip-list {
+  @apply mt-2 flex flex-wrap gap-1.5;
+}
+
+.sidebar-settings-chip {
+  @apply rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] text-zinc-700;
 }
 
 .sidebar-settings-rate-limits {

@@ -6,7 +6,7 @@
         v-model="query"
         class="skill-picker-search"
         type="text"
-        placeholder="Search skills..."
+        :placeholder="searchPlaceholder || 'Search...'"
         @keydown.escape.prevent="$emit('close')"
         @keydown.enter.prevent="selectHighlighted"
         @keydown.arrow-down.prevent="moveHighlight(1)"
@@ -45,6 +45,7 @@ const props = defineProps<{
   visible: boolean
   anchorBottom?: number
   anchorLeft?: number
+  searchPlaceholder?: string
 }>()
 
 const emit = defineEmits<{

@@ -56,6 +56,16 @@ type CurrentModelConfig = {
   speedMode: SpeedMode
 }
 
+export type SessionStatusOverview = {
+  model: string
+  reasoningEffort: ReasoningEffort | ''
+  speedMode: SpeedMode
+  profile: string
+  approvalPolicy: string
+  sandboxMode: string
+  mcpServers: string[]
+}
+
 type ProviderModelsResponse = {
   data?: unknown
 }
@@ -190,6 +200,25 @@ function readNumber(value: unknown): number | null {
 
 function readBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => readString(entry)).filter((entry): entry is string => entry !== null)
+    : []
+}
+
+function formatConfigScalar(value: unknown): string {
+  if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 
 function normalizeAccountUnavailableReason(value: unknown): UiAccountUnavailableReason | null {
@@ -846,6 +875,12 @@ export async function renameThread(threadId: string, threadName: string): Promis
   await callRpc('thread/name/set', { threadId, name: threadName })
 }
 
+export async function compactThread(threadId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+  await callRpc('thread/compact/start', { threadId: normalizedThreadId })
+}
+
 export async function rollbackThread(threadId: string, numTurns: number): Promise<UiMessage[]> {
   const payload = await callRpc<ThreadReadResponse>('thread/rollback', { threadId, numTurns })
   return normalizeThreadMessagesV2(payload)
@@ -1155,6 +1190,33 @@ export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
   const reasoningEffort = normalizeReasoningEffort(payload.config.model_reasoning_effort)
   const speedMode = normalizeSpeedMode(payload.config.service_tier)
   return { model, reasoningEffort, speedMode }
+}
+
+export async function getSessionStatusOverview(): Promise<SessionStatusOverview> {
+  const payload = await callRpc<ConfigReadResponse>('config/read', {})
+  const configRecord = asRecord(payload.config) ?? {}
+  const mcpServersRecord = asRecord(configRecord.mcp_servers)
+  const mcpServerNames = mcpServersRecord
+    ? Object.keys(mcpServersRecord).filter((name) => {
+      const record = asRecord(mcpServersRecord[name])
+      const enabled = readBoolean(record?.enabled)
+      return enabled !== false
+    })
+    : []
+
+  return {
+    model: readString(configRecord.model) ?? '',
+    reasoningEffort: normalizeReasoningEffort(configRecord.model_reasoning_effort),
+    speedMode: normalizeSpeedMode(configRecord.service_tier),
+    profile: readString(configRecord.profile) ?? '',
+    approvalPolicy: formatConfigScalar(configRecord.approval_policy),
+    sandboxMode: formatConfigScalar(configRecord.sandbox_mode),
+    mcpServers: mcpServerNames,
+  }
+}
+
+export async function reloadMcpServerConfig(): Promise<void> {
+  await callRpc('config/mcpServer/reload', {})
 }
 
 export async function getAccountRateLimitsResponse(): Promise<GetAccountRateLimitsResponse> {
