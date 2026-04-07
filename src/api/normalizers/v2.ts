@@ -8,6 +8,7 @@ import type {
 } from '../appServerDtos'
 import type {
   CommandExecutionData,
+  McpToolCallData,
   UiFileAttachment,
   UiFileChange,
   UiFileChangeStatus,
@@ -287,6 +288,12 @@ export function normalizeFileChangeStatus(value: unknown): UiFileChangeStatus {
   return 'inProgress'
 }
 
+function normalizeMcpToolCallStatus(value: unknown): McpToolCallData['status'] {
+  if (value === 'failed' || value === 'completed') return value
+  if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
+  return 'completed'
+}
+
 export function toUiFileChanges(changes: unknown): UiFileChange[] {
   const rows = Array.isArray(changes) ? changes : []
   const normalized: UiFileChange[] = []
@@ -363,7 +370,22 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   }
 
   if (item.type === 'reasoning') {
-    return []
+    const summary = Array.isArray(item.summary)
+      ? item.summary.filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+      : []
+    const content = Array.isArray(item.content)
+      ? item.content.filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+      : []
+    const text = (summary.length > 0 ? summary : content).join('\n\n').trim()
+    if (!text) return []
+    return [
+      {
+        id: item.id,
+        role: 'assistant',
+        text,
+        messageType: 'reasoning',
+      },
+    ]
   }
 
   if (item.type === 'plan') {
@@ -393,6 +415,76 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
         text: cmd,
         messageType: 'commandExecution',
         commandExecution: { command: cmd, cwd, status, aggregatedOutput, exitCode },
+      },
+    ]
+  }
+
+  if (item.type === 'mcpToolCall') {
+    const raw = item as Record<string, unknown>
+    const server = typeof raw.server === 'string' ? raw.server : ''
+    const tool = typeof raw.tool === 'string' ? raw.tool : ''
+    const status = normalizeMcpToolCallStatus(raw.status)
+    const argumentsText = raw.arguments === undefined ? '' : toRawPayload(raw.arguments)
+    const resultText = raw.result == null ? '' : toRawPayload(raw.result)
+    const errorText = raw.error == null ? '' : toRawPayload(raw.error)
+    const summary = [server, tool].filter(Boolean).join('.')
+    return [
+      {
+        id: item.id,
+        role: 'system',
+        text: summary,
+        messageType: 'mcpToolCall',
+        mcpToolCall: {
+          server,
+          tool,
+          status,
+          argumentsText,
+          progressText: '',
+          resultText,
+          errorText,
+        },
+      },
+    ]
+  }
+
+  if (item.type === 'collabAgentToolCall') {
+    const raw = item as Record<string, unknown>
+    const tool = typeof raw.tool === 'string' ? raw.tool : ''
+    const status = normalizeMcpToolCallStatus(raw.status)
+    const receiverThreadIds = Array.isArray(raw.receiverThreadIds)
+      ? raw.receiverThreadIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : []
+    const agentStates = raw.agentsStates && typeof raw.agentsStates === 'object'
+      ? Object.entries(raw.agentsStates as Record<string, unknown>).flatMap(([agentId, state]) => {
+          if (!state || typeof state !== 'object') return []
+          const record = state as Record<string, unknown>
+          return [{
+            agentId,
+            status: typeof record.status === 'string' ? record.status : 'unknown',
+            message: typeof record.message === 'string' ? record.message : '',
+          }]
+        })
+      : []
+    const promptText = typeof raw.prompt === 'string' ? raw.prompt : ''
+    const model = typeof raw.model === 'string' ? raw.model : ''
+    const reasoningEffort = typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort : ''
+    const summary = tool || 'agent action'
+    return [
+      {
+        id: item.id,
+        role: 'system',
+        text: summary,
+        messageType: 'collabToolCall',
+        collabToolCall: {
+          tool,
+          status,
+          senderThreadId: typeof raw.senderThreadId === 'string' ? raw.senderThreadId : '',
+          receiverThreadIds,
+          promptText,
+          model,
+          reasoningEffort,
+          agentStates,
+        },
       },
     ]
   }

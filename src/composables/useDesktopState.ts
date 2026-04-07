@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import {
-
   archiveThread,
+  compactThread,
   forkThread,
   getAvailableCollaborationModes,
   getAccountRateLimits,
@@ -24,7 +24,6 @@ import {
   persistThreadTitle,
   generateThreadTitle,
   resumeThread,
-
   startThread,
   subscribeCodexNotifications,
   startThreadTurn,
@@ -33,9 +32,11 @@ import {
 } from '../api/codexGateway'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
+  CollabToolCallData,
   CollaborationModeKind,
   CollaborationModeOption,
   CommandExecutionData,
+  McpToolCallData,
   UiPendingRequestState,
   ReasoningEffort,
   SpeedMode,
@@ -438,6 +439,56 @@ function areCommandExecutionsEqual(first?: CommandExecutionData, second?: Comman
   return first.status === second.status && first.aggregatedOutput === second.aggregatedOutput && first.exitCode === second.exitCode
 }
 
+function areMcpToolCallsEqual(first?: McpToolCallData, second?: McpToolCallData): boolean {
+  if (!first && !second) return true
+  if (!first || !second) return false
+  return (
+    first.server === second.server &&
+    first.tool === second.tool &&
+    first.status === second.status &&
+    first.argumentsText === second.argumentsText &&
+    first.progressText === second.progressText &&
+    first.resultText === second.resultText &&
+    first.errorText === second.errorText
+  )
+}
+
+function areCollabAgentStatesEqual(
+  first?: CollabToolCallData['agentStates'],
+  second?: CollabToolCallData['agentStates'],
+): boolean {
+  if (!first && !second) return true
+  if (!first || !second) return false
+  if (first.length !== second.length) return false
+  for (let index = 0; index < first.length; index += 1) {
+    const left = first[index]
+    const right = second[index]
+    if (
+      left.agentId !== right.agentId
+      || left.status !== right.status
+      || left.message !== right.message
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function areCollabToolCallsEqual(first?: CollabToolCallData, second?: CollabToolCallData): boolean {
+  if (!first && !second) return true
+  if (!first || !second) return false
+  return (
+    first.tool === second.tool &&
+    first.status === second.status &&
+    first.senderThreadId === second.senderThreadId &&
+    areStringArraysEqual(first.receiverThreadIds, second.receiverThreadIds) &&
+    first.promptText === second.promptText &&
+    first.model === second.model &&
+    first.reasoningEffort === second.reasoningEffort &&
+    areCollabAgentStatesEqual(first.agentStates, second.agentStates)
+  )
+}
+
 function arePlanStepsEqual(first: UiPlanStep[] = [], second: UiPlanStep[] = []): boolean {
   if (first.length !== second.length) return false
   for (let index = 0; index < first.length; index += 1) {
@@ -479,6 +530,8 @@ function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
     first.rawPayload === second.rawPayload &&
     first.isUnhandled === second.isUnhandled &&
     areCommandExecutionsEqual(first.commandExecution, second.commandExecution) &&
+    areMcpToolCallsEqual(first.mcpToolCall, second.mcpToolCall) &&
+    areCollabToolCallsEqual(first.collabToolCall, second.collabToolCall) &&
     arePlanDataEqual(first.plan, second.plan) &&
     first.turnId === second.turnId &&
     first.turnIndex === second.turnIndex
@@ -654,6 +707,67 @@ function formatTurnDuration(durationMs: number): string {
   return parts.join(' ')
 }
 
+function buildToolSummaryText(
+  commandCount: number,
+  mcpCount: number,
+  fileChangeCount: number,
+  collabCount: number,
+  backgroundAgentCount: number,
+): string {
+  const parts: string[] = []
+  if (commandCount > 0) parts.push(commandCount === 1 ? '1 command' : `${commandCount} commands`)
+  if (mcpCount > 0) parts.push(mcpCount === 1 ? '1 MCP tool' : `${mcpCount} MCP tools`)
+  if (fileChangeCount > 0) parts.push(fileChangeCount === 1 ? '1 file change' : `${fileChangeCount} file changes`)
+  if (collabCount > 0) parts.push(collabCount === 1 ? '1 agent action' : `${collabCount} agent actions`)
+  if (backgroundAgentCount > 0) parts.push(backgroundAgentCount === 1 ? '1 background agent' : `${backgroundAgentCount} background agents`)
+  return parts.join(' · ')
+}
+
+function collectRelevantFileChangeMessages(messages: UiMessage[], activeTurnId: string): UiMessage[] {
+  const fileChangeMessages = messages.filter((message) => (
+    message.messageType === 'fileChange'
+    && Array.isArray(message.fileChanges)
+    && message.fileChanges.length > 0
+  ))
+
+  if (fileChangeMessages.length === 0) return []
+
+  if (activeTurnId) {
+    return fileChangeMessages.filter((message) => !message.turnId || message.turnId === activeTurnId)
+  }
+
+  const indexedMessages = fileChangeMessages.filter((message) => typeof message.turnIndex === 'number')
+  if (indexedMessages.length > 0) {
+    const latestTurnIndex = Math.max(...indexedMessages.map((message) => message.turnIndex as number))
+    return fileChangeMessages.filter((message) => message.turnIndex === latestTurnIndex)
+  }
+
+  const latestTurnId = [...fileChangeMessages]
+    .reverse()
+    .find((message) => typeof message.turnId === 'string' && message.turnId.length > 0)
+    ?.turnId
+
+  if (latestTurnId) {
+    return fileChangeMessages.filter((message) => message.turnId === latestTurnId)
+  }
+
+  return fileChangeMessages
+}
+
+function summarizeFileChangeTotals(messages: UiMessage[]): { addedLineCount: number; removedLineCount: number } {
+  let addedLineCount = 0
+  let removedLineCount = 0
+
+  for (const message of messages) {
+    for (const change of message.fileChanges ?? []) {
+      addedLineCount += change.addedLineCount
+      removedLineCount += change.removedLineCount
+    }
+  }
+
+  return { addedLineCount, removedLineCount }
+}
+
 function areTurnSummariesEqual(first?: TurnSummaryState, second?: TurnSummaryState): boolean {
   if (!first && !second) return true
   if (!first || !second) return false
@@ -675,7 +789,7 @@ function buildTurnSummaryMessage(summary: TurnSummaryState): UiMessage {
   return {
     id: `turn-summary:${summary.turnId}`,
     role: 'system',
-    text: `Worked for ${formatTurnDuration(summary.durationMs)}`,
+    text: `Worked ${formatTurnDuration(summary.durationMs)}`,
     messageType: WORKED_MESSAGE_TYPE,
     turnId: summary.turnId,
   }
@@ -865,6 +979,7 @@ export function useDesktopState() {
   const livePlanMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveAgentMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveReasoningTextByThreadId = ref<Record<string, string>>({})
+  const liveOverlayUpdatedAtByThreadId = ref<Record<string, number>>({})
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const inProgressById = ref<Record<string, boolean>>({})
@@ -939,6 +1054,7 @@ export function useDesktopState() {
   let eventSyncTimer: number | null = null
   let rateLimitRefreshTimer: number | null = null
   const delayedTurnSyncTimerByThreadId = new Map<string, number>()
+  const delayedCompactOverlayTimerByThreadId = new Map<string, number>()
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
   const pendingThreadMessageRefresh = new Set<string>()
@@ -974,13 +1090,63 @@ export function useDesktopState() {
     const activity = turnActivityByThreadId.value[threadId]
     const reasoningText = (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
     const errorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    const updatedAtMs = liveOverlayUpdatedAtByThreadId.value[threadId] ?? null
+    const activeTurnId = activeTurnIdByThreadId.value[threadId] ?? ''
+    const liveCommands = (liveCommandsByThreadId.value[threadId] ?? []).filter((message) => (
+      !activeTurnId || !message.turnId || message.turnId === activeTurnId
+    ))
+    const liveFileChanges = (liveFileChangeMessagesByThreadId.value[threadId] ?? []).filter((message) => (
+      !activeTurnId || !message.turnId || message.turnId === activeTurnId
+    ))
+    const commandCount = liveCommands.filter((message) => message.commandExecution).length
+    const mcpCount = liveCommands.filter((message) => message.mcpToolCall).length
+    const collabCalls = liveCommands.filter((message) => message.collabToolCall)
+    const collabCount = collabCalls.length
+    const backgroundAgentCount = collabCalls.reduce((count, message) => (
+      count + (message.collabToolCall?.receiverThreadIds.length ?? 0)
+    ), 0)
+    const backgroundAgents = Array.from(new Map(
+      collabCalls.flatMap((message) => {
+        const collab = message.collabToolCall
+        if (!collab) return []
+        return collab.receiverThreadIds.map((receiverThreadId) => {
+          const matchingThread = allThreads.value.find((thread) => thread.id === receiverThreadId)
+          const matchingState = collab.agentStates.find((state) => state.agentId === receiverThreadId)
+          const agentActiveTurnId = activeTurnIdByThreadId.value[receiverThreadId] ?? ''
+          const persistedFileChanges = persistedMessagesByThreadId.value[receiverThreadId] ?? []
+          const liveFileChanges = liveFileChangeMessagesByThreadId.value[receiverThreadId] ?? []
+          const relevantFileChanges = collectRelevantFileChangeMessages(
+            Array.from(new Map(
+              [...persistedFileChanges, ...liveFileChanges].map((candidate) => [candidate.id, candidate] as const),
+            ).values()),
+            agentActiveTurnId,
+          )
+          const fileChangeTotals = summarizeFileChangeTotals(relevantFileChanges)
+          return [
+            receiverThreadId,
+            {
+              threadId: receiverThreadId,
+              title: matchingThread?.title || matchingThread?.preview || `Agent ${receiverThreadId.slice(0, 6)}`,
+              status: matchingState?.status || 'running',
+              message: matchingState?.message || '',
+              addedLineCount: fileChangeTotals.addedLineCount,
+              removedLineCount: fileChangeTotals.removedLineCount,
+            },
+          ] as const
+        })
+      }),
+    ).values())
+    const fileChangeCount = liveFileChanges.filter((message) => (message.fileChanges?.length ?? 0) > 0).length
 
     if (!activity && !reasoningText && !errorText) return null
     return {
       activityLabel: activity?.label || 'Thinking',
+      activitySummaryText: buildToolSummaryText(commandCount, mcpCount, fileChangeCount, collabCount, backgroundAgentCount),
       activityDetails: activity?.details ?? [],
+      backgroundAgents,
       reasoningText,
       errorText,
+      updatedAtMs,
     }
   })
   const codexQuota = computed<UiRateLimitSnapshot | null>(() => codexRateLimit.value)
@@ -1415,6 +1581,7 @@ export function useDesktopState() {
     persistedMessagesByThreadId.value = pruneThreadStateMap(persistedMessagesByThreadId.value, activeThreadIds)
     liveAgentMessagesByThreadId.value = pruneThreadStateMap(liveAgentMessagesByThreadId.value, activeThreadIds)
     liveReasoningTextByThreadId.value = pruneThreadStateMap(liveReasoningTextByThreadId.value, activeThreadIds)
+    liveOverlayUpdatedAtByThreadId.value = pruneThreadStateMap(liveOverlayUpdatedAtByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
     liveFileChangeMessagesByThreadId.value = pruneThreadStateMap(liveFileChangeMessagesByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
@@ -1506,7 +1673,8 @@ export function useDesktopState() {
     const incomingDetails = activity.details
       .map((line) => sanitizeDisplayText(line))
       .filter((line) => line.length > 0 && line !== normalizedLabel)
-    const mergedDetails = Array.from(new Set([...(previous?.details ?? []), ...incomingDetails])).slice(-3)
+    const baseDetails = previous?.label === normalizedLabel ? (previous?.details ?? []) : []
+    const mergedDetails = Array.from(new Set([...baseDetails, ...incomingDetails])).slice(-8)
     const nextActivity: TurnActivityState = {
       label: normalizedLabel,
       details: mergedDetails,
@@ -1672,6 +1840,28 @@ export function useDesktopState() {
     setLiveReasoningText(threadId, `${previous}${delta}`)
   }
 
+  function touchLiveOverlay(threadId: string, updatedAtMs = Date.now()): void {
+    if (!threadId || !Number.isFinite(updatedAtMs)) return
+    if (liveOverlayUpdatedAtByThreadId.value[threadId] === updatedAtMs) return
+    liveOverlayUpdatedAtByThreadId.value = {
+      ...liveOverlayUpdatedAtByThreadId.value,
+      [threadId]: updatedAtMs,
+    }
+  }
+
+  function clearDelayedCompactOverlay(threadId: string): void {
+    const timerId = delayedCompactOverlayTimerByThreadId.get(threadId)
+    if (typeof timerId !== 'number') return
+    window.clearTimeout(timerId)
+    delayedCompactOverlayTimerByThreadId.delete(threadId)
+  }
+
+  function clearLiveOverlayTimestamp(threadId: string): void {
+    if (!threadId) return
+    if (!(threadId in liveOverlayUpdatedAtByThreadId.value)) return
+    liveOverlayUpdatedAtByThreadId.value = omitKey(liveOverlayUpdatedAtByThreadId.value, threadId)
+  }
+
   function clearLiveReasoningForThread(threadId: string): void {
     if (!threadId) return
     if (!(threadId in liveReasoningTextByThreadId.value)) return
@@ -1694,6 +1884,7 @@ export function useDesktopState() {
     if (!threadId) return
     clearLivePlansForThread(threadId)
     clearLiveReasoningForThread(threadId)
+    clearLiveOverlayTimestamp(threadId)
     setTurnActivityForThread(threadId, null)
     if (liveCommandsByThreadId.value[threadId]) {
       liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
@@ -1796,6 +1987,16 @@ export function useDesktopState() {
 
   function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null
+  }
+
+  function stringifyPayload(value: unknown): string {
+    if (value === undefined || value === null) return ''
+    if (typeof value === 'string') return value
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
   }
 
   function getRateLimitSnapshotKey(snapshot: UiRateLimitSnapshot): string {
@@ -2150,6 +2351,31 @@ export function useDesktopState() {
           },
         }
       }
+      if (itemType === 'collabagenttoolcall') {
+        const tool = readString(item?.tool)
+        const receiverThreadIds = Array.isArray(item?.receiverThreadIds)
+          ? item.receiverThreadIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+          : []
+        const countLabel = receiverThreadIds.length > 0
+          ? `${receiverThreadIds.length} ${receiverThreadIds.length === 1 ? 'agent' : 'agents'}`
+          : ''
+        return {
+          threadId,
+          activity: {
+            label: 'Coordinating agents',
+            details: [tool, countLabel].filter((value) => value.length > 0),
+          },
+        }
+      }
+      if (itemType === 'contextcompaction') {
+        return {
+          threadId,
+          activity: {
+            label: 'Compacting context',
+            details: [],
+          },
+        }
+      }
     }
 
     if (notification.method === 'item/commandExecution/outputDelta') {
@@ -2436,11 +2662,30 @@ export function useDesktopState() {
     return null
   }
 
+  function readNotificationTurnContext(
+    notification: RpcNotification,
+  ): { threadId: string; turnId: string; turnIndex: number | undefined } | null {
+    const params = asRecord(notification.params)
+    if (!params) return null
+    const threadId = extractThreadIdFromNotification(notification)
+    if (!threadId) return null
+    const turnPayload = asRecord(params.turn)
+    const turnId = readString(turnPayload?.id) || readString(params.turnId)
+    if (!turnId) return { threadId, turnId: '', turnIndex: undefined }
+    const turnIndex = turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
+    return {
+      threadId,
+      turnId,
+      turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
+    }
+  }
+
   function readCommandExecutionStarted(notification: RpcNotification): UiMessage | null {
     if (notification.method !== 'item/started') return null
     const params = asRecord(notification.params)
     const item = asRecord(params?.item)
     if (!item || item.type !== 'commandExecution') return null
+    const turnContext = readNotificationTurnContext(notification)
     const id = readString(item.id)
     const command = readString(item.command)
     if (!id) return null
@@ -2451,6 +2696,8 @@ export function useDesktopState() {
       text: command,
       messageType: 'commandExecution',
       commandExecution: { command, cwd, status: 'inProgress', aggregatedOutput: '', exitCode: null },
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
     }
   }
 
@@ -2469,6 +2716,7 @@ export function useDesktopState() {
     const params = asRecord(notification.params)
     const item = asRecord(params?.item)
     if (!item || item.type !== 'commandExecution') return null
+    const turnContext = readNotificationTurnContext(notification)
     const id = readString(item.id)
     const command = readString(item.command)
     if (!id) return null
@@ -2484,6 +2732,156 @@ export function useDesktopState() {
       text: command,
       messageType: 'commandExecution',
       commandExecution: { command, cwd, status, aggregatedOutput, exitCode },
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
+    }
+  }
+
+  function normalizeMcpToolCallStatus(value: unknown): McpToolCallData['status'] {
+    if (value === 'failed' || value === 'completed') return value
+    if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
+    return 'completed'
+  }
+
+  function normalizeCollabToolCallStatus(value: unknown): CollabToolCallData['status'] {
+    if (value === 'failed' || value === 'completed') return value
+    if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
+    return 'completed'
+  }
+
+  function readCollabToolCallItem(raw: Record<string, unknown>): CollabToolCallData {
+    const receiverThreadIds = Array.isArray(raw.receiverThreadIds)
+      ? raw.receiverThreadIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : []
+    const agentStates = raw.agentsStates && typeof raw.agentsStates === 'object'
+      ? Object.entries(raw.agentsStates as Record<string, unknown>).flatMap(([agentId, state]) => {
+          if (!state || typeof state !== 'object') return []
+          const record = state as Record<string, unknown>
+          return [{
+            agentId,
+            status: typeof record.status === 'string' ? record.status : 'unknown',
+            message: typeof record.message === 'string' ? record.message : '',
+          }]
+        })
+      : []
+
+    return {
+      tool: readString(raw.tool),
+      status: normalizeCollabToolCallStatus(raw.status),
+      senderThreadId: readString(raw.senderThreadId),
+      receiverThreadIds,
+      promptText: readString(raw.prompt),
+      model: readString(raw.model),
+      reasoningEffort: readString(raw.reasoningEffort),
+      agentStates,
+    }
+  }
+
+  function readMcpToolCallStarted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/started') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'mcpToolCall') return null
+    const turnContext = readNotificationTurnContext(notification)
+    const id = readString(item.id)
+    if (!id) return null
+    const server = readString(item.server)
+    const tool = readString(item.tool)
+    return {
+      id,
+      role: 'system',
+      text: [server, tool].filter(Boolean).join('.'),
+      messageType: 'mcpToolCall',
+      mcpToolCall: {
+        server,
+        tool,
+        status: normalizeMcpToolCallStatus(item.status),
+        argumentsText: stringifyPayload(item.arguments),
+        progressText: '',
+        resultText: '',
+        errorText: '',
+      },
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
+    }
+  }
+
+  function readMcpToolCallProgress(notification: RpcNotification): { itemId: string; progressText: string } | null {
+    if (notification.method !== 'item/mcpToolCall/progress') return null
+    const params = asRecord(notification.params)
+    if (!params) return null
+    const itemId = readString(params.itemId)
+    const progressText = readString(params.message)
+    if (!itemId) return null
+    return { itemId, progressText }
+  }
+
+  function readMcpToolCallCompleted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/completed') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'mcpToolCall') return null
+    const turnContext = readNotificationTurnContext(notification)
+    const id = readString(item.id)
+    if (!id) return null
+    const server = readString(item.server)
+    const tool = readString(item.tool)
+    return {
+      id,
+      role: 'system',
+      text: [server, tool].filter(Boolean).join('.'),
+      messageType: 'mcpToolCall',
+      mcpToolCall: {
+        server,
+        tool,
+        status: normalizeMcpToolCallStatus(item.status),
+        argumentsText: stringifyPayload(item.arguments),
+        progressText: '',
+        resultText: stringifyPayload(item.result),
+        errorText: stringifyPayload(item.error),
+      },
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
+    }
+  }
+
+  function readCollabToolCallStarted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/started') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'collabAgentToolCall') return null
+    const turnContext = readNotificationTurnContext(notification)
+    const id = readString(item.id)
+    if (!id) return null
+    const collabToolCall = readCollabToolCallItem(item)
+    return {
+      id,
+      role: 'system',
+      text: collabToolCall.tool || 'agent action',
+      messageType: 'collabToolCall',
+      collabToolCall,
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
+    }
+  }
+
+  function readCollabToolCallCompleted(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/completed') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    if (!item || item.type !== 'collabAgentToolCall') return null
+    const turnContext = readNotificationTurnContext(notification)
+    const id = readString(item.id)
+    if (!id) return null
+    const collabToolCall = readCollabToolCallItem(item)
+    return {
+      id,
+      role: 'system',
+      text: collabToolCall.tool || 'agent action',
+      messageType: 'collabToolCall',
+      collabToolCall,
+      turnId: turnContext?.turnId || undefined,
+      turnIndex: turnContext?.turnIndex,
     }
   }
 
@@ -2613,6 +3011,7 @@ export function useDesktopState() {
     const turnActivity = readTurnActivity(notification)
     if (turnActivity) {
       setTurnActivityForThread(turnActivity.threadId, turnActivity.activity)
+      touchLiveOverlay(turnActivity.threadId)
     }
 
     const notificationThreadId = extractThreadIdFromNotification(notification)
@@ -2623,6 +3022,7 @@ export function useDesktopState() {
 
     const startedTurn = readTurnStartedInfo(notification)
     if (startedTurn) {
+      clearDelayedCompactOverlay(startedTurn.threadId)
       pendingTurnStartsById.set(startedTurn.turnId, startedTurn)
       setTurnIndexForThread(startedTurn.threadId, startedTurn.turnId, inferNextTurnIndex(startedTurn.threadId))
       activeTurnIdByThreadId.value = {
@@ -2634,6 +3034,7 @@ export function useDesktopState() {
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
       setThreadInProgress(startedTurn.threadId, true)
+      touchLiveOverlay(startedTurn.threadId, startedTurn.startedAtMs)
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
       }
@@ -2648,6 +3049,7 @@ export function useDesktopState() {
       selectedModelId.value !== MODEL_FALLBACK_ID &&
       isUnsupportedChatGptModelError(new Error(turnErrorMessage))
     if (completedTurn) {
+      clearDelayedCompactOverlay(completedTurn.threadId)
       const pendingTurnRequest = pendingTurnRequestByThreadId.value[completedTurn.threadId]
       const startedTurnState = pendingTurnStartsById.get(completedTurn.turnId)
       if (startedTurnState) {
@@ -2760,6 +3162,7 @@ export function useDesktopState() {
     const liveReasoningDelta = readReasoningDelta(notification)
     if (liveReasoningDelta) {
       appendLiveReasoningText(notificationThreadId, liveReasoningDelta.delta)
+      touchLiveOverlay(notificationThreadId)
     }
 
     const sectionBreakMessageId = readReasoningSectionBreakMessageId(notification)
@@ -2768,6 +3171,7 @@ export function useDesktopState() {
       if (current.trim().length > 0 && !current.endsWith('\n\n')) {
         setLiveReasoningText(notificationThreadId, `${current}\n\n`)
       }
+      touchLiveOverlay(notificationThreadId)
     }
 
     const completedReasoningMessageId = readReasoningCompletedId(notification)
@@ -2781,6 +3185,7 @@ export function useDesktopState() {
     if (commandStarted) {
       upsertLiveCommand(notificationThreadId, commandStarted)
       setTurnActivityForThread(notificationThreadId, { label: 'Running command', details: [commandStarted.commandExecution?.command ?? ''] })
+      touchLiveOverlay(notificationThreadId)
     }
 
     const commandDelta = readCommandOutputDelta(notification)
@@ -2792,16 +3197,91 @@ export function useDesktopState() {
           commandExecution: { ...current.commandExecution, aggregatedOutput: `${current.commandExecution.aggregatedOutput}${commandDelta.delta}` },
         })
       }
+      touchLiveOverlay(notificationThreadId)
     }
 
     const commandCompleted = readCommandExecutionCompleted(notification)
     if (commandCompleted) {
       upsertLiveCommand(notificationThreadId, commandCompleted)
+      touchLiveOverlay(notificationThreadId)
+    }
+
+    const mcpStarted = readMcpToolCallStarted(notification)
+    if (mcpStarted) {
+      upsertLiveCommand(notificationThreadId, mcpStarted)
+      const title = [mcpStarted.mcpToolCall?.server, mcpStarted.mcpToolCall?.tool].filter(Boolean).join('.')
+      setTurnActivityForThread(notificationThreadId, { label: 'Calling MCP tool', details: title ? [title] : [] })
+      touchLiveOverlay(notificationThreadId)
+    }
+
+    const mcpProgress = readMcpToolCallProgress(notification)
+    if (mcpProgress) {
+      const current = (liveCommandsByThreadId.value[notificationThreadId] ?? []).find((m) => m.id === mcpProgress.itemId)
+      if (current?.mcpToolCall) {
+        upsertLiveCommand(notificationThreadId, {
+          ...current,
+          mcpToolCall: { ...current.mcpToolCall, progressText: mcpProgress.progressText },
+        })
+        const title = [current.mcpToolCall.server, current.mcpToolCall.tool].filter(Boolean).join('.')
+        setTurnActivityForThread(notificationThreadId, {
+          label: 'Calling MCP tool',
+          details: [title, mcpProgress.progressText].filter((value) => value.length > 0),
+        })
+      }
+      touchLiveOverlay(notificationThreadId)
+    }
+
+    const mcpCompleted = readMcpToolCallCompleted(notification)
+    if (mcpCompleted) {
+      const current = (liveCommandsByThreadId.value[notificationThreadId] ?? []).find((m) => m.id === mcpCompleted.id)
+      upsertLiveCommand(notificationThreadId, current?.mcpToolCall
+        ? {
+            ...mcpCompleted,
+            mcpToolCall: {
+              ...mcpCompleted.mcpToolCall!,
+              progressText: current.mcpToolCall.progressText,
+            },
+          }
+        : mcpCompleted)
+      touchLiveOverlay(notificationThreadId)
+    }
+
+    const collabStarted = readCollabToolCallStarted(notification)
+    if (collabStarted) {
+      upsertLiveCommand(notificationThreadId, collabStarted)
+      const tool = collabStarted.collabToolCall?.tool ?? ''
+      const receiverCount = collabStarted.collabToolCall?.receiverThreadIds.length ?? 0
+      setTurnActivityForThread(notificationThreadId, {
+        label: 'Coordinating agents',
+        details: [
+          tool,
+          receiverCount > 0 ? `spawned ${receiverCount} ${receiverCount === 1 ? 'agent' : 'agents'}` : '',
+        ].filter((value) => value.length > 0),
+      })
+      touchLiveOverlay(notificationThreadId)
+    }
+
+    const collabCompleted = readCollabToolCallCompleted(notification)
+    if (collabCompleted) {
+      upsertLiveCommand(notificationThreadId, collabCompleted)
+      const receiverCount = collabCompleted.collabToolCall?.receiverThreadIds.length ?? 0
+      const agentStates = collabCompleted.collabToolCall?.agentStates ?? []
+      const completedCount = agentStates.filter((state) => state.status === 'completed').length
+      setTurnActivityForThread(notificationThreadId, {
+        label: 'Coordinating agents',
+        details: [
+          collabCompleted.collabToolCall?.tool ?? '',
+          receiverCount > 0 ? `${receiverCount} background agents` : '',
+          completedCount > 0 ? `${completedCount} completed` : '',
+        ].filter((value) => value.length > 0),
+      })
+      touchLiveOverlay(notificationThreadId)
     }
 
     const completedFileChange = readCompletedFileChange(notification)
     if (completedFileChange) {
       upsertLiveFileChangeMessage(notificationThreadId, completedFileChange)
+      touchLiveOverlay(notificationThreadId)
     }
 
     if (isAgentContentEvent(notification)) {
@@ -2814,12 +3294,14 @@ export function useDesktopState() {
       }
       activeReasoningItemId = ''
       clearLiveReasoningForThread(notificationThreadId)
+      touchLiveOverlay(notificationThreadId)
     }
 
     if (notification.method === 'turn/completed') {
       activeReasoningItemId = ''
       shouldAutoScrollOnNextAgentEvent = false
       clearLiveReasoningForThread(notificationThreadId)
+      clearLiveOverlayTimestamp(notificationThreadId)
       if (liveCommandsByThreadId.value[notificationThreadId]) {
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, notificationThreadId)
       }
@@ -3562,6 +4044,45 @@ export function useDesktopState() {
     }
   }
 
+  async function compactSelectedThread(): Promise<void> {
+    const threadId = selectedThreadId.value
+    if (!threadId) return
+    if (inProgressById.value[threadId] === true) return
+
+    error.value = ''
+    shouldAutoScrollOnNextAgentEvent = true
+    setTurnSummaryForThread(threadId, null)
+    setTurnErrorForThread(threadId, null)
+    setThreadInProgress(threadId, true)
+    clearDelayedCompactOverlay(threadId)
+    delayedCompactOverlayTimerByThreadId.set(threadId, window.setTimeout(() => {
+      delayedCompactOverlayTimerByThreadId.delete(threadId)
+      setTurnActivityForThread(threadId, {
+        label: 'Compacting context',
+        details: ['Summarizing earlier messages to free context.'],
+      })
+      touchLiveOverlay(threadId)
+    }, 220))
+
+    try {
+      await compactThread(threadId)
+      clearDelayedCompactOverlay(threadId)
+      pendingThreadMessageRefresh.add(threadId)
+      pendingThreadsRefresh = true
+      await syncFromNotifications()
+      scheduleDelayedTurnSync(threadId)
+    } catch (unknownError) {
+      clearDelayedCompactOverlay(threadId)
+      shouldAutoScrollOnNextAgentEvent = false
+      setThreadInProgress(threadId, false)
+      setTurnActivityForThread(threadId, null)
+      const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to compact thread'
+      setTurnErrorForThread(threadId, errorMessage)
+      error.value = errorMessage
+      throw unknownError
+    }
+  }
+
   async function interruptSelectedThreadTurn(): Promise<void> {
     const threadId = selectedThreadId.value
     if (!threadId) return
@@ -3603,20 +4124,20 @@ export function useDesktopState() {
     }
   }
 
-  async function rollbackSelectedThread(turnId: string): Promise<void> {
+  async function rollbackSelectedThread(turnId: string): Promise<boolean> {
     const threadId = selectedThreadId.value
-    if (!threadId) return
-    if (isRollingBack.value) return
-    if (!turnId.trim()) return
+    if (!threadId) return false
+    if (isRollingBack.value) return false
+    if (!turnId.trim()) return false
 
     const persisted = persistedMessagesByThreadId.value[threadId] ?? []
     const matchedMessage = persisted.find((message) => message.turnId === turnId)
     const turnIndex = typeof matchedMessage?.turnIndex === 'number' ? matchedMessage.turnIndex : -1
-    if (turnIndex < 0) return
+    if (turnIndex < 0) return false
     const maxTurnIndex = persisted.reduce((max, m) => (typeof m.turnIndex === 'number' && m.turnIndex > max ? m.turnIndex : max), -1)
-    if (maxTurnIndex < 0 || turnIndex > maxTurnIndex) return
+    if (maxTurnIndex < 0 || turnIndex > maxTurnIndex) return false
     const numTurns = maxTurnIndex - turnIndex + 1
-    if (numTurns < 1) return
+    if (numTurns < 1) return false
 
     isRollingBack.value = true
     error.value = ''
@@ -3633,8 +4154,10 @@ export function useDesktopState() {
       setTurnErrorForThread(threadId, null)
       pendingThreadsRefresh = true
       await syncFromNotifications()
+      return true
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Failed to rollback thread'
+      return false
     } finally {
       isRollingBack.value = false
     }
@@ -3963,6 +4486,7 @@ export function useDesktopState() {
     livePlanMessagesByThreadId.value = {}
     liveAgentMessagesByThreadId.value = {}
     liveReasoningTextByThreadId.value = {}
+    liveOverlayUpdatedAtByThreadId.value = {}
     liveCommandsByThreadId.value = {}
     liveFileChangeMessagesByThreadId.value = {}
     turnIndexByTurnIdByThreadId.value = {}
@@ -4064,6 +4588,7 @@ export function useDesktopState() {
     removeProject,
     reorderProject,
     pinProjectToTop,
+    compactSelectedThread,
     startPolling,
     stopPolling,
     primeSelectedThread,

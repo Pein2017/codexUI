@@ -12,7 +12,7 @@
     <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
       <template v-for="message in messages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id) && !hiddenWorkedToolIds.has(message.id) && !hiddenLiveRuntimeMessageIds.has(message.id)"
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
@@ -102,6 +102,72 @@
                 </div>
               </div>
             </template>
+          </div>
+        </div>
+
+        <div v-else-if="isMcpToolCallMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              type="button"
+              class="cmd-row"
+              :class="[
+                mcpToolCallStatusClass(message),
+                {
+                  'cmd-expanded': isMcpToolCallExpanded(message),
+                  'cmd-compact': isMcpToolCallCompact(message),
+                },
+              ]"
+              @click="toggleMcpToolCallExpand(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(message) }">▶</span>
+              <code class="cmd-label">{{ mcpToolCallLabel(message) }}</code>
+              <span class="cmd-status">{{ mcpToolCallStatusLabel(message) }}</span>
+            </button>
+            <div
+              class="cmd-output-wrap"
+              :class="{ 'cmd-output-visible': isMcpToolCallExpanded(message) }"
+            >
+              <div class="cmd-output-inner">
+                <pre
+                  class="cmd-output"
+                  :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(message) }"
+                  v-text="mcpToolCallOutput(message)"
+                ></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="isCollabToolCallMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              type="button"
+              class="cmd-row"
+              :class="[
+                collabToolCallStatusClass(message),
+                {
+                  'cmd-expanded': isCollabToolCallExpanded(message),
+                  'cmd-compact': isCollabToolCallCompact(message),
+                },
+              ]"
+              @click="toggleCollabToolCallExpand(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(message) }">▶</span>
+              <code class="cmd-label">{{ collabToolCallLabel(message) }}</code>
+              <span class="cmd-status">{{ collabToolCallStatusLabel(message) }}</span>
+            </button>
+            <div
+              class="cmd-output-wrap"
+              :class="{ 'cmd-output-visible': isCollabToolCallExpanded(message) }"
+            >
+              <div class="cmd-output-inner">
+                <pre
+                  class="cmd-output"
+                  :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(message) }"
+                  v-text="collabToolCallOutput(message)"
+                ></pre>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -218,43 +284,108 @@
                   <button type="button" class="worked-separator" @click="toggleWorkedExpand(message)">
                     <span class="worked-separator-line" aria-hidden="true" />
                     <span class="worked-chevron" :class="{ 'worked-chevron-open': isWorkedExpanded(message) }">▶</span>
-                    <p class="worked-separator-text">{{ message.text }}</p>
+                    <span class="worked-summary-copy">
+                      <p class="worked-separator-text">{{ workedSummaryLabel(message) }}</p>
+                      <p v-if="workedSummaryMeta(message)" class="worked-summary-meta">{{ workedSummaryMeta(message) }}</p>
+                    </span>
                     <span class="worked-separator-line" aria-hidden="true" />
                   </button>
                   <div v-if="isWorkedExpanded(message)" class="worked-details">
                     <div
-                      v-for="cmd in getCommandsForWorked(messages, messages.indexOf(message))"
-                      :key="`worked-cmd-${cmd.id}`"
+                      v-for="activity in getActivitiesForWorked(message)"
+                      :key="`worked-cmd-${activity.id}`"
                       class="worked-cmd-item"
                     >
-                      <button
-                        type="button"
-                        class="cmd-row"
-                        :class="[
-                          commandStatusClass(cmd),
-                          {
-                            'cmd-expanded': isCommandExpanded(cmd),
-                            'cmd-compact': isCommandCompact(cmd),
-                          },
-                        ]"
-                        @click="toggleCommandExpand(cmd)"
-                      >
-                        <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                        <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
-                        <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
-                      </button>
-                      <div
-                        class="cmd-output-wrap"
-                        :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
-                      >
-                        <div class="cmd-output-inner">
-                          <pre
-                            class="cmd-output"
-                            :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                            v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
-                          ></pre>
+                      <template v-if="isCommandMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            commandStatusClass(activity),
+                            {
+                              'cmd-expanded': isCommandExpanded(activity),
+                              'cmd-compact': isCommandCompact(activity),
+                            },
+                          ]"
+                          @click="toggleCommandExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ activity.commandExecution?.command || '(command)' }}</code>
+                          <span class="cmd-status">{{ commandStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isCommandExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isCommandOutputCondensed(activity) }"
+                              v-text="activity.commandExecution?.aggregatedOutput || '(no output)'"
+                            ></pre>
+                          </div>
                         </div>
-                      </div>
+                      </template>
+                      <template v-else-if="isMcpToolCallMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            mcpToolCallStatusClass(activity),
+                            {
+                              'cmd-expanded': isMcpToolCallExpanded(activity),
+                              'cmd-compact': isMcpToolCallCompact(activity),
+                            },
+                          ]"
+                          @click="toggleMcpToolCallExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ mcpToolCallLabel(activity) }}</code>
+                          <span class="cmd-status">{{ mcpToolCallStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isMcpToolCallExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(activity) }"
+                              v-text="mcpToolCallOutput(activity)"
+                            ></pre>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="isCollabToolCallMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            collabToolCallStatusClass(activity),
+                            {
+                              'cmd-expanded': isCollabToolCallExpanded(activity),
+                              'cmd-compact': isCollabToolCallCompact(activity),
+                            },
+                          ]"
+                          @click="toggleCollabToolCallExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ collabToolCallLabel(activity) }}</code>
+                          <span class="cmd-status">{{ collabToolCallStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isCollabToolCallExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(activity) }"
+                              v-text="collabToolCallOutput(activity)"
+                            ></pre>
+                          </div>
+                        </div>
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -280,6 +411,12 @@
                     </li>
                   </ol>
                   <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                </div>
+                <div v-else-if="isReasoningMessage(message)" class="reasoning-card">
+                  <div class="reasoning-card-header">
+                    <p class="reasoning-card-title">Thinking Summary</p>
+                  </div>
+                  <div class="reasoning-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
                 </div>
                 <div v-else class="message-text-flow">
                   <template v-for="(block, blockIndex) in parseMessageBlocks(message.text)" :key="`block-${blockIndex}`">
@@ -595,10 +732,21 @@
               </section>
 
               <div
-                v-if="showCopyResponseButton(message) || showRollbackButton(message)"
+                v-if="showCopyResponseButton(message) || showRollbackButton(message) || showEditUserMessageButton(message)"
                 class="message-toolbar"
                 :data-role="message.role"
               >
+                <button
+                  v-if="showEditUserMessageButton(message)"
+                  type="button"
+                  class="message-edit-button"
+                  aria-label="Edit this message"
+                  title="Edit this message"
+                  @click="editUserMessage(message.id)"
+                >
+                  <IconTablerFilePencil class="icon-svg message-edit-icon" />
+                  <span class="message-edit-label">Edit</span>
+                </button>
                 <button
                   v-if="showRollbackButton(message)"
                   type="button"
@@ -643,7 +791,69 @@
         <div class="message-row">
           <div class="message-stack">
             <article class="live-overlay-inline" aria-live="polite">
-              <p class="live-overlay-label">{{ liveOverlay.activityLabel }}</p>
+              <div class="live-overlay-header">
+                <p class="live-overlay-label">{{ liveOverlay.activityLabel }}</p>
+                <p v-if="liveOverlayStatusText" class="live-overlay-status" :data-stale="isLiveOverlayStale">
+                  {{ liveOverlayStatusText }}
+                </p>
+              </div>
+              <p v-if="liveOverlay.activitySummaryText" class="live-overlay-summary">{{ liveOverlay.activitySummaryText }}</p>
+              <ul v-if="liveOverlay.activityDetails.length > 0" class="live-overlay-activity-list">
+                <li
+                  v-for="(detail, detailIndex) in liveOverlay.activityDetails"
+                  :key="`live-detail:${detailIndex}:${detail}`"
+                  class="live-overlay-activity-item"
+                >
+                  {{ detail }}
+                </li>
+              </ul>
+              <section v-if="liveOverlay.backgroundAgents.length > 0" class="live-overlay-agents">
+                <div class="live-overlay-agents-header">
+                  <span class="live-overlay-agents-title">
+                    {{ liveOverlay.backgroundAgents.length }} background agents
+                  </span>
+                </div>
+                <ul class="live-overlay-agents-list">
+                  <li
+                    v-for="agent in liveOverlay.backgroundAgents"
+                    :key="`live-agent:${agent.threadId}`"
+                    class="live-overlay-agent-row"
+                  >
+                    <div class="live-overlay-agent-copy">
+                      <span class="live-overlay-agent-name">{{ agent.title }}</span>
+                      <span
+                        v-if="backgroundAgentStatusDetail(agent)"
+                        class="live-overlay-agent-meta"
+                      >
+                        {{ backgroundAgentStatusDetail(agent) }}
+                      </span>
+                    </div>
+                    <div class="live-overlay-agent-actions">
+                      <span
+                        v-if="backgroundAgentDeltaParts(agent).length > 0"
+                        class="live-overlay-agent-delta"
+                      >
+                        <span
+                          v-for="part in backgroundAgentDeltaParts(agent)"
+                          :key="`live-agent-delta:${agent.threadId}:${part.tone}:${part.label}`"
+                          class="file-change-signed-count"
+                          :data-tone="part.tone"
+                        >
+                          {{ part.label }}
+                        </span>
+                      </span>
+                      <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
+                      <button
+                        type="button"
+                        class="live-overlay-agent-open"
+                        @click="openBackgroundAgentThread(agent.threadId)"
+                      >
+                        Open
+                      </button>
+                    </div>
+                  </li>
+                </ul>
+              </section>
               <p
                 v-if="liveOverlay.reasoningText"
                 class="live-overlay-reasoning"
@@ -919,6 +1129,7 @@ import { useMobile } from '../../composables/useMobile'
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
+import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
@@ -991,8 +1202,20 @@ function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
 }
 
+function isMcpToolCallMessage(message: UiMessage): boolean {
+  return message.messageType === 'mcpToolCall' && !!message.mcpToolCall
+}
+
+function isCollabToolCallMessage(message: UiMessage): boolean {
+  return message.messageType === 'collabToolCall' && !!message.collabToolCall
+}
+
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
+}
+
+function isReasoningMessage(message: UiMessage): boolean {
+  return message.messageType === 'reasoning'
 }
 
 function isFileChangeMessage(message: UiMessage): boolean {
@@ -1009,10 +1232,16 @@ function isCopyableAssistantMessage(message: UiMessage): boolean {
     && !(message.messageType ?? '').endsWith('.live')
 }
 
-const activeCommandMessageId = computed(() => {
+const activeToolMessageId = computed(() => {
   for (let index = props.messages.length - 1; index >= 0; index -= 1) {
     const message = props.messages[index]
     if (message.messageType === 'commandExecution' && message.commandExecution?.status === 'inProgress') {
+      return message.id
+    }
+    if (message.messageType === 'mcpToolCall' && message.mcpToolCall?.status === 'inProgress') {
+      return message.id
+    }
+    if (message.messageType === 'collabToolCall' && message.collabToolCall?.status === 'inProgress') {
       return message.id
     }
   }
@@ -1028,8 +1257,22 @@ const hasLiveAssistantText = computed(() =>
 )
 
 const isLiveTurnRuntime = computed(() =>
-  Boolean(props.liveOverlay) || activeCommandMessageId.value.length > 0 || hasLiveAssistantText.value,
+  Boolean(props.liveOverlay) || activeToolMessageId.value.length > 0 || hasLiveAssistantText.value,
 )
+
+const activeRuntimeTurnId = computed(() => {
+  for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+    const message = props.messages[index]
+    if (!message.turnId) continue
+    if (message.messageType === 'agentMessage.live' && message.text.trim().length > 0) return message.turnId
+    if (message.messageType === 'plan.live') return message.turnId
+    if (message.messageType === 'commandExecution' && message.commandExecution?.status === 'inProgress') return message.turnId
+    if (message.messageType === 'mcpToolCall' && message.mcpToolCall?.status === 'inProgress') return message.turnId
+    if (message.messageType === 'collabToolCall' && message.collabToolCall?.status === 'inProgress') return message.turnId
+    if (message.messageType === 'fileChange') return message.turnId
+  }
+  return ''
+})
 
 const groupedCommandsByLatestId = computed<Record<string, UiMessage[]>>(() => {
   const next: Record<string, UiMessage[]> = {}
@@ -1063,6 +1306,53 @@ const hiddenGroupedCommandIds = computed(() => {
   return next
 })
 
+const hiddenWorkedToolIds = computed(() => {
+  const expandedWorkedTurnIds = new Set(
+    props.messages
+      .filter((message) => (
+        message.messageType === 'worked'
+        && expandedWorkedIds.value.has(message.id)
+        && typeof message.turnId === 'string'
+        && message.turnId.length > 0
+      ))
+      .map((message) => message.turnId as string),
+  )
+  const next = new Set<string>()
+  if (expandedWorkedTurnIds.size === 0) return next
+
+  for (const message of props.messages) {
+    if (!message.turnId || !expandedWorkedTurnIds.has(message.turnId)) continue
+    if (
+      message.messageType === 'commandExecution'
+      || message.messageType === 'mcpToolCall'
+      || message.messageType === 'collabToolCall'
+    ) {
+      next.add(message.id)
+    }
+  }
+  return next
+})
+
+const hiddenLiveRuntimeMessageIds = computed(() => {
+  const next = new Set<string>()
+  const activeTurnId = activeRuntimeTurnId.value
+  if (!activeTurnId || !isLiveTurnRuntime.value) return next
+
+  for (const message of props.messages) {
+    if (message.turnId !== activeTurnId) continue
+    if (
+      message.messageType === 'commandExecution'
+      || message.messageType === 'mcpToolCall'
+      || message.messageType === 'collabToolCall'
+      || message.messageType === 'fileChange'
+    ) {
+      next.add(message.id)
+    }
+  }
+
+  return next
+})
+
 function readPlanExplanation(message: UiMessage): string {
   return readPlanData(message)?.explanation ?? ''
 }
@@ -1083,7 +1373,7 @@ function planStepStatusIcon(status: UiPlanStep['status']): string {
 }
 
 function isCommandAutoExpanded(message: UiMessage): boolean {
-  return !hasLiveAssistantText.value && message.id === activeCommandMessageId.value
+  return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
 }
 
 function isCommandExpanded(message: UiMessage): boolean {
@@ -1100,12 +1390,92 @@ function isCommandOutputCondensed(message: UiMessage): boolean {
   return isCommandMessage(message) && (isLiveTurnRuntime.value || message.commandExecution?.status === 'inProgress')
 }
 
+function isMcpToolCallAutoExpanded(message: UiMessage): boolean {
+  return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
+}
+
+function isMcpToolCallExpanded(message: UiMessage): boolean {
+  if (!isMcpToolCallMessage(message)) return false
+  return expandedCommandIds.value.has(message.id)
+    || (!collapsedAutoCommandIds.value.has(message.id) && isMcpToolCallAutoExpanded(message))
+}
+
+function isMcpToolCallCompact(message: UiMessage): boolean {
+  return isMcpToolCallMessage(message) && isLiveTurnRuntime.value
+}
+
+function isMcpToolCallOutputCondensed(message: UiMessage): boolean {
+  return isMcpToolCallMessage(message) && (isLiveTurnRuntime.value || message.mcpToolCall?.status === 'inProgress')
+}
+
+function isCollabToolCallAutoExpanded(message: UiMessage): boolean {
+  return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
+}
+
+function isCollabToolCallExpanded(message: UiMessage): boolean {
+  if (!isCollabToolCallMessage(message)) return false
+  const isAutoExpanded = isCollabToolCallAutoExpanded(message)
+  return expandedCommandIds.value.has(message.id) || (isAutoExpanded && !collapsedAutoCommandIds.value.has(message.id))
+}
+
+function isCollabToolCallCompact(message: UiMessage): boolean {
+  return isCollabToolCallMessage(message) && isLiveTurnRuntime.value
+}
+
+function isCollabToolCallOutputCondensed(message: UiMessage): boolean {
+  return isCollabToolCallMessage(message) && (isLiveTurnRuntime.value || message.collabToolCall?.status === 'inProgress')
+}
+
 function toggleCommandExpand(message: UiMessage): void {
   if (!isCommandMessage(message)) return
 
   const nextExpanded = new Set(expandedCommandIds.value)
   const nextCollapsedAuto = new Set(collapsedAutoCommandIds.value)
   const isAutoExpanded = isCommandAutoExpanded(message)
+  const isManuallyExpanded = nextExpanded.has(message.id)
+
+  if (isManuallyExpanded) {
+    nextExpanded.delete(message.id)
+    if (isAutoExpanded) nextCollapsedAuto.add(message.id)
+  } else if (isAutoExpanded && !nextCollapsedAuto.has(message.id)) {
+    nextCollapsedAuto.add(message.id)
+  } else {
+    nextExpanded.add(message.id)
+    nextCollapsedAuto.delete(message.id)
+  }
+
+  expandedCommandIds.value = nextExpanded
+  collapsedAutoCommandIds.value = nextCollapsedAuto
+}
+
+function toggleMcpToolCallExpand(message: UiMessage): void {
+  if (!isMcpToolCallMessage(message)) return
+
+  const nextExpanded = new Set(expandedCommandIds.value)
+  const nextCollapsedAuto = new Set(collapsedAutoCommandIds.value)
+  const isAutoExpanded = isMcpToolCallAutoExpanded(message)
+  const isManuallyExpanded = nextExpanded.has(message.id)
+
+  if (isManuallyExpanded) {
+    nextExpanded.delete(message.id)
+    if (isAutoExpanded) nextCollapsedAuto.add(message.id)
+  } else if (isAutoExpanded && !nextCollapsedAuto.has(message.id)) {
+    nextCollapsedAuto.add(message.id)
+  } else {
+    nextExpanded.add(message.id)
+    nextCollapsedAuto.delete(message.id)
+  }
+
+  expandedCommandIds.value = nextExpanded
+  collapsedAutoCommandIds.value = nextCollapsedAuto
+}
+
+function toggleCollabToolCallExpand(message: UiMessage): void {
+  if (!isCollabToolCallMessage(message)) return
+
+  const nextExpanded = new Set(expandedCommandIds.value)
+  const nextCollapsedAuto = new Set(collapsedAutoCommandIds.value)
+  const isAutoExpanded = isCollabToolCallAutoExpanded(message)
   const isManuallyExpanded = nextExpanded.has(message.id)
 
   if (isManuallyExpanded) {
@@ -1231,6 +1601,123 @@ function commandStatusClass(message: UiMessage): string {
   return 'cmd-status-error'
 }
 
+function mcpToolCallLabel(message: UiMessage): string {
+  const mcp = message.mcpToolCall
+  if (!mcp) return '(MCP tool)'
+  const qualified = [mcp.server, mcp.tool].filter(Boolean).join('.')
+  return qualified || '(MCP tool)'
+}
+
+function mcpToolCallStatusLabel(message: UiMessage): string {
+  const mcp = message.mcpToolCall
+  if (!mcp) return ''
+  const compact = isMcpToolCallCompact(message)
+  switch (mcp.status) {
+    case 'inProgress':
+      return compact ? 'Running' : '⟳ Running'
+    case 'completed':
+      return compact ? 'Done' : '✓ Completed'
+    case 'failed':
+      return compact ? 'Failed' : '✗ Failed'
+    default:
+      return ''
+  }
+}
+
+function mcpToolCallStatusClass(message: UiMessage): string {
+  const status = message.mcpToolCall?.status
+  if (status === 'inProgress') return 'cmd-status-running'
+  if (status === 'completed') return 'cmd-status-ok'
+  return 'cmd-status-error'
+}
+
+function mcpToolCallOutput(message: UiMessage): string {
+  const mcp = message.mcpToolCall
+  if (!mcp) return '(no details)'
+  const sections: string[] = []
+  if (mcp.argumentsText.trim()) {
+    sections.push(`arguments\n${mcp.argumentsText.trim()}`)
+  }
+  if (mcp.progressText.trim()) {
+    sections.push(`progress\n${mcp.progressText.trim()}`)
+  }
+  if (mcp.resultText.trim()) {
+    sections.push(`result\n${mcp.resultText.trim()}`)
+  }
+  if (mcp.errorText.trim()) {
+    sections.push(`error\n${mcp.errorText.trim()}`)
+  }
+  return sections.join('\n\n') || '(no details)'
+}
+
+function collabToolNameLabel(tool: string): string {
+  switch (tool) {
+    case 'spawnAgent': return 'Spawn agent'
+    case 'sendInput': return 'Send input'
+    case 'resumeAgent': return 'Resume agent'
+    case 'wait': return 'Wait'
+    case 'closeAgent': return 'Close agent'
+    default: return tool || 'Agent action'
+  }
+}
+
+function collabToolCallLabel(message: UiMessage): string {
+  const collab = message.collabToolCall
+  if (!collab) return 'Agent action'
+  const targetCount = collab.receiverThreadIds.length
+  const targetSuffix = targetCount > 0 ? ` · ${targetCount} ${targetCount === 1 ? 'agent' : 'agents'}` : ''
+  return `${collabToolNameLabel(collab.tool)}${targetSuffix}`
+}
+
+function collabToolCallStatusLabel(message: UiMessage): string {
+  const collab = message.collabToolCall
+  if (!collab) return ''
+  const compact = isCollabToolCallCompact(message)
+  switch (collab.status) {
+    case 'inProgress':
+      return compact ? 'Running' : '⟳ Running'
+    case 'completed':
+      return compact ? 'Done' : '✓ Completed'
+    case 'failed':
+      return compact ? 'Failed' : '✗ Failed'
+    default:
+      return ''
+  }
+}
+
+function collabToolCallStatusClass(message: UiMessage): string {
+  const status = message.collabToolCall?.status
+  if (status === 'inProgress') return 'cmd-status-running'
+  if (status === 'completed') return 'cmd-status-ok'
+  return 'cmd-status-error'
+}
+
+function collabToolCallOutput(message: UiMessage): string {
+  const collab = message.collabToolCall
+  if (!collab) return '(no details)'
+  const sections: string[] = []
+  if (collab.promptText.trim()) {
+    sections.push(`prompt\n${collab.promptText.trim()}`)
+  }
+  if (collab.model.trim() || collab.reasoningEffort.trim()) {
+    sections.push(
+      `config\n${[
+        collab.model.trim() ? `model: ${collab.model.trim()}` : '',
+        collab.reasoningEffort.trim() ? `reasoning: ${collab.reasoningEffort.trim()}` : '',
+      ].filter((value) => value.length > 0).join('\n')}`,
+    )
+  }
+  if (collab.receiverThreadIds.length > 0) {
+    sections.push(`targets\n${collab.receiverThreadIds.join('\n')}`)
+  }
+  if (collab.agentStates.length > 0) {
+    sections.push(`agent states\n${collab.agentStates.map((state) => (
+      `${state.agentId}: ${state.status}${state.message ? ` — ${state.message}` : ''}`
+    )).join('\n')}`)
+  }
+  return sections.join('\n\n') || '(no details)'
+}
+
 function pruneCommandIdSet(source: Set<string>, validIds: Set<string>): Set<string> {
   if (source.size === 0) return source
   const next = new Set<string>()
@@ -1240,14 +1727,95 @@ function pruneCommandIdSet(source: Set<string>, validIds: Set<string>): Set<stri
   return next.size === source.size ? source : next
 }
 
-function getCommandsForWorked(messages: UiMessage[], workedIndex: number): UiMessage[] {
-  const result: UiMessage[] = []
-  for (let i = workedIndex - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.messageType === 'commandExecution') result.unshift(m)
-    else if (m.role === 'user' || m.messageType === 'worked') break
+function getActivitiesForWorked(message: UiMessage): UiMessage[] {
+  if (message.messageType !== 'worked' || !message.turnId) return []
+  return props.messages.filter((candidate) => (
+    candidate.turnId === message.turnId
+    && (
+      candidate.messageType === 'commandExecution'
+      || candidate.messageType === 'mcpToolCall'
+      || candidate.messageType === 'collabToolCall'
+    )
+  ))
+}
+
+function workedSummaryLabel(message: UiMessage): string {
+  return message.text
+}
+
+function workedSummaryMeta(message: UiMessage): string {
+  const activities = getActivitiesForWorked(message)
+  const commandCount = activities.filter((activity) => activity.messageType === 'commandExecution').length
+  const mcpCount = activities.filter((activity) => activity.messageType === 'mcpToolCall').length
+  const collabCount = activities.filter((activity) => activity.messageType === 'collabToolCall').length
+  const backgroundAgentCount = activities.reduce((count, activity) => (
+    count + (activity.collabToolCall?.receiverThreadIds.length ?? 0)
+  ), 0)
+  const fileChangeCount = props.messages
+    .filter((candidate) => candidate.turnId === message.turnId)
+    .reduce((count, candidate) => count + (candidate.fileChanges?.length ?? 0), 0)
+  const parts: string[] = []
+  if (commandCount > 0) parts.push(commandCount === 1 ? '1 command' : `${commandCount} commands`)
+  if (mcpCount > 0) parts.push(mcpCount === 1 ? '1 MCP tool' : `${mcpCount} MCP tools`)
+  if (collabCount > 0) parts.push(collabCount === 1 ? '1 agent action' : `${collabCount} agent actions`)
+  if (backgroundAgentCount > 0) parts.push(backgroundAgentCount === 1 ? '1 background agent' : `${backgroundAgentCount} background agents`)
+  if (fileChangeCount > 0) parts.push(fileChangeCount === 1 ? '1 file change' : `${fileChangeCount} file changes`)
+  return parts.join(' · ')
+}
+
+type BackgroundAgentRow = UiLiveOverlay['backgroundAgents'][number]
+
+function backgroundAgentStatusLabel(agent: BackgroundAgentRow): string {
+  switch (agent.status) {
+    case 'running':
+      return 'Working'
+    case 'completed':
+      return 'Done'
+    case 'errored':
+      return 'Errored'
+    case 'interrupted':
+      return 'Interrupted'
+    case 'pendingInit':
+      return 'Starting'
+    case 'shutdown':
+      return 'Closed'
+    case 'notFound':
+      return 'Missing'
+    default:
+      return agent.status
   }
-  return result
+}
+
+function backgroundAgentStatusDetail(agent: BackgroundAgentRow): string {
+  const message = agent.message.trim()
+  if (message) return message
+  switch (agent.status) {
+    case 'running':
+      return 'is working'
+    case 'completed':
+      return 'finished its task'
+    case 'errored':
+      return 'hit an error'
+    case 'interrupted':
+      return 'was interrupted'
+    case 'pendingInit':
+      return 'is starting'
+    case 'shutdown':
+      return 'has closed'
+    case 'notFound':
+      return 'is unavailable'
+    default:
+      return ''
+  }
+}
+
+function backgroundAgentDeltaParts(agent: BackgroundAgentRow): FileChangeDeltaPart[] {
+  return buildFileChangeDeltaParts(agent.addedLineCount, agent.removedLineCount)
+}
+
+function openBackgroundAgentThread(threadId: string): void {
+  if (!threadId) return
+  emit('openThread', { threadId })
 }
 
 const props = defineProps<{
@@ -1264,6 +1832,8 @@ const emit = defineEmits<{
   updateScrollState: [payload: { threadId: string; state: ThreadScrollState }]
   forkThread: [payload: { threadId: string; turnIndex: number }]
   rollback: [payload: { turnId: string }]
+  editMessage: [payload: { messageId: string }]
+  openThread: [payload: { threadId: string }]
   respondServerRequest: [payload: { id: number; result?: unknown; error?: { code?: number; message: string } }]
 }>()
 
@@ -1325,14 +1895,38 @@ let scrollRestoreFrame = 0
 let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
+let liveOverlayClockTimer: number | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const failedMarkdownImageKeys = ref<Set<string>>(new Set())
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 let highlightJsLoader: Promise<void> | null = null
+const liveOverlayClockNow = ref(Date.now())
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
 )
+
+const liveOverlayAgeMs = computed(() => {
+  const updatedAtMs = props.liveOverlay?.updatedAtMs
+  if (typeof updatedAtMs !== 'number' || !Number.isFinite(updatedAtMs)) return null
+  return Math.max(0, liveOverlayClockNow.value - updatedAtMs)
+})
+
+const isLiveOverlayStale = computed(() => {
+  const ageMs = liveOverlayAgeMs.value
+  return typeof ageMs === 'number' && ageMs >= 15000
+})
+
+const liveOverlayStatusText = computed(() => {
+  const ageMs = liveOverlayAgeMs.value
+  if (typeof ageMs !== 'number') return ''
+  const ageSeconds = Math.floor(ageMs / 1000)
+  if (ageSeconds <= 1) return 'Updated just now'
+  if (ageSeconds < 60) return `Last update ${ageSeconds}s ago`
+  const ageMinutes = Math.floor(ageSeconds / 60)
+  if (ageMinutes === 1) return 'Last update 1m ago'
+  return `Last update ${ageMinutes}m ago`
+})
 
 function ensureHighlightJsLoaded(): Promise<void> {
   if (highlightJsModule.value) return Promise.resolve()
@@ -2150,10 +2744,22 @@ function showRollbackButton(message: UiMessage): boolean {
   return typeof rollbackTurnIdByAnchorId.value[message.id] === 'string'
 }
 
+function showEditUserMessageButton(message: UiMessage): boolean {
+  if (message.role !== 'user' || message.messageType !== 'userMessage') return false
+  if ((message.turnId?.trim() ?? '').length === 0) return false
+  return message.text.trim().length > 0
+    || (message.images?.length ?? 0) > 0
+    || (message.fileAttachments?.length ?? 0) > 0
+}
+
 function rollbackResponse(anchorMessageId: string): void {
   const turnId = rollbackTurnIdByAnchorId.value[anchorMessageId]
   if (!turnId) return
   emit('rollback', { turnId })
+}
+
+function editUserMessage(messageId: string): void {
+  emit('editMessage', { messageId })
 }
 
 function splitPlainTextByLinks(text: string): InlineSegment[] {
@@ -3668,7 +4274,11 @@ watch(
 
     const commandIds = new Set(
       next
-        .filter((message) => message.messageType === 'commandExecution' && message.commandExecution)
+        .filter((message) => (
+          (message.messageType === 'commandExecution' && message.commandExecution)
+          || (message.messageType === 'mcpToolCall' && message.mcpToolCall)
+          || (message.messageType === 'collabToolCall' && message.collabToolCall)
+        ))
         .map((message) => message.id),
     )
     expandedCommandIds.value = pruneCommandIdSet(expandedCommandIds.value, commandIds)
@@ -3700,7 +4310,7 @@ watch(
 )
 
 watch(
-  activeCommandMessageId,
+  activeToolMessageId,
   (nextId, prevId) => {
     if (!prevId || prevId === nextId) return
     if (!collapsedAutoCommandIds.value.has(prevId)) return
@@ -3724,6 +4334,13 @@ watch(
   async (overlay) => {
     if (!overlay) return
     await nextTick()
+    if (!shouldLockToBottom()) {
+      const container = conversationListRef.value
+      if (container) {
+        emitScrollState(container)
+      }
+      return
+    }
     enforceBottomState()
     scheduleBottomLock(8)
   },
@@ -3785,6 +4402,9 @@ function closeImageModal(): void {
 }
 
 onMounted(() => {
+  liveOverlayClockTimer = window.setInterval(() => {
+    liveOverlayClockNow.value = Date.now()
+  }, 1000)
   window.addEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.addEventListener('blur', onWindowBlurForFileLinkContextMenu)
   window.addEventListener('keydown', onWindowKeydownForFileLinkContextMenu)
@@ -3799,6 +4419,9 @@ onBeforeUnmount(() => {
   }
   if (copiedMessageResetTimer) {
     clearTimeout(copiedMessageResetTimer)
+  }
+  if (liveOverlayClockTimer) {
+    window.clearInterval(liveOverlayClockTimer)
   }
   window.removeEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.removeEventListener('blur', onWindowBlurForFileLinkContextMenu)
@@ -3825,6 +4448,17 @@ onBeforeUnmount(() => {
   @apply h-full min-h-0 list-none m-0 px-2 sm:px-6 py-0 overflow-y-auto overflow-x-visible flex flex-col gap-2 sm:gap-3;
 }
 
+@media (max-width: 639px) {
+  .conversation-loading,
+  .conversation-empty {
+    @apply px-3 pt-0.5 text-[14px];
+  }
+
+  .conversation-list {
+    @apply px-2 pb-0.5;
+  }
+}
+
 .conversation-item {
   @apply m-0 w-full min-w-0 flex;
 }
@@ -3834,7 +4468,7 @@ onBeforeUnmount(() => {
 }
 
 .conversation-item-overlay {
-  @apply justify-center;
+  @apply justify-center py-1;
 }
 
 .message-row {
@@ -3924,11 +4558,107 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-inline {
-  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] px-0 py-1 flex flex-col gap-1;
+  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] px-3 py-2.5 flex flex-col gap-1.5 rounded-2xl border border-zinc-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,247,246,0.94))] shadow-[0_1px_0_rgba(15,23,42,0.02)];
+  position: relative;
+}
+
+.live-overlay-inline::before {
+  content: '';
+  @apply absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-zinc-300/80;
+}
+
+.live-overlay-header {
+  @apply flex items-center gap-2 justify-between;
 }
 
 .live-overlay-label {
-  @apply m-0 text-sm leading-5 font-medium text-zinc-600;
+  @apply m-0 text-sm leading-5 font-medium text-zinc-700;
+}
+
+.live-overlay-status {
+  @apply m-0 text-[11px] leading-4 text-zinc-400 flex-shrink-0;
+}
+
+.live-overlay-status[data-stale='true'] {
+  @apply text-amber-600;
+}
+
+.live-overlay-summary {
+  @apply m-0 text-xs leading-4 text-zinc-400;
+}
+
+.live-overlay-activity-list {
+  @apply m-0 p-0 list-none flex flex-col gap-1;
+}
+
+.live-overlay-activity-item {
+  @apply text-sm leading-5 text-zinc-500 pl-3 relative;
+}
+
+.live-overlay-activity-item::before {
+  content: '';
+  @apply absolute left-0 top-[0.6rem] h-1 w-1 rounded-full bg-zinc-400/80;
+}
+
+.live-overlay-agents {
+  @apply rounded-xl border border-zinc-200/80 bg-white/70 px-2.5 py-2 flex flex-col gap-1.5;
+}
+
+.live-overlay-agents-header {
+  @apply flex items-center justify-between gap-2;
+}
+
+.live-overlay-agents-title {
+  @apply text-xs leading-4 text-zinc-500;
+}
+
+.live-overlay-agents-list {
+  @apply m-0 p-0 list-none flex flex-col gap-1;
+}
+
+.live-overlay-agent-row {
+  @apply flex items-center justify-between gap-3 text-sm leading-5;
+}
+
+.live-overlay-agent-copy {
+  @apply min-w-0 flex flex-col gap-0.5;
+}
+
+.live-overlay-agent-name {
+  @apply min-w-0 truncate text-zinc-700;
+}
+
+.live-overlay-agent-meta {
+  @apply text-xs leading-4 text-zinc-400 truncate;
+}
+
+.live-overlay-agent-actions {
+  @apply flex items-center gap-2 flex-shrink-0;
+}
+
+.live-overlay-agent-delta {
+  @apply flex items-center gap-1 flex-shrink-0;
+}
+
+.live-overlay-agent-status {
+  @apply text-[11px] leading-4 text-zinc-400 flex-shrink-0;
+}
+
+.live-overlay-agent-status[data-status='running'] {
+  @apply text-amber-600;
+}
+
+.live-overlay-agent-status[data-status='completed'] {
+  @apply text-emerald-600;
+}
+
+.live-overlay-agent-status[data-status='errored'],
+.live-overlay-agent-status[data-status='interrupted'] {
+  @apply text-rose-600;
+}
+
+.live-overlay-agent-open {
+  @apply rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[11px] leading-4 text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700;
 }
 
 .live-overlay-reasoning {
@@ -3938,8 +4668,8 @@ onBeforeUnmount(() => {
   overflow: auto;
   overflow-wrap: anywhere;
   scrollbar-width: none;
-  mask-image: linear-gradient(to top, black 75%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to top, black 75%, transparent 100%);
+  mask-image: linear-gradient(to top, black 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 82%, transparent 100%);
 }
 
 .live-overlay-reasoning::-webkit-scrollbar {
@@ -3964,10 +4694,26 @@ onBeforeUnmount(() => {
   @apply mt-1 self-start flex items-center gap-1 opacity-[0.01] transition-opacity duration-200;
 }
 
+.message-toolbar[data-role='user'] {
+  @apply self-end;
+}
+
 .message-row:hover .message-toolbar {
   @apply opacity-100;
 }
 
+@media (hover: none), (pointer: coarse) {
+  .message-toolbar[data-role='user'] {
+    @apply opacity-100;
+  }
+
+  .message-toolbar[data-role='user'] .message-edit-button {
+    min-height: 1.75rem;
+    padding: 0.25rem 0.5rem;
+  }
+}
+
+.message-edit-button,
 .message-copy-button {
   @apply inline-flex items-center gap-0.5 rounded-full border border-slate-200 bg-white/90 px-1.25 py-0.5 text-[9px] font-medium leading-none text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900;
 }
@@ -3985,12 +4731,14 @@ onBeforeUnmount(() => {
   @apply inline-flex items-center gap-0.5 px-0.5 py-0 text-[9px] font-medium leading-none text-amber-600/70 transition hover:text-amber-700;
 }
 
+.message-edit-icon,
 .message-fork-icon,
 .message-copy-icon,
 .message-rollback-icon {
   @apply text-[10px];
 }
 
+.message-edit-label,
 .message-fork-label,
 .message-copy-label,
 .message-rollback-label {
@@ -4043,6 +4791,64 @@ onBeforeUnmount(() => {
 
 .plan-card {
   @apply flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-slate-900;
+}
+
+.reasoning-card {
+  @apply flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-zinc-900;
+}
+
+.reasoning-card-header {
+  @apply flex items-center justify-between gap-3;
+}
+
+.reasoning-card-title {
+  @apply m-0 text-sm font-semibold leading-5 text-zinc-800;
+}
+
+.reasoning-card-markdown {
+  @apply flex flex-col gap-2;
+}
+
+.reasoning-card-markdown :deep(.message-text),
+.reasoning-card-markdown :deep(.message-heading),
+.reasoning-card-markdown :deep(.message-blockquote),
+.reasoning-card-markdown :deep(.message-list),
+.reasoning-card-markdown :deep(.message-table-wrap),
+.reasoning-card-markdown :deep(.message-code-block),
+.reasoning-card-markdown :deep(.message-divider) {
+  @apply m-0;
+}
+
+.reasoning-card-markdown :deep(.message-text) {
+  @apply text-sm leading-relaxed whitespace-pre-wrap text-zinc-700;
+}
+
+.reasoning-card-markdown :deep(.message-heading) {
+  @apply text-zinc-900 tracking-tight;
+}
+
+.reasoning-card-markdown :deep(.message-blockquote) {
+  @apply rounded-r-lg border-l-4 border-zinc-300 bg-white/80 py-1 pl-4 text-sm leading-relaxed whitespace-pre-wrap text-zinc-700;
+}
+
+.reasoning-card-markdown :deep(.message-list) {
+  @apply flex flex-col gap-1.5 pl-5 text-sm leading-relaxed text-zinc-800;
+}
+
+.reasoning-card-markdown :deep(.message-list-unordered) {
+  @apply list-disc;
+}
+
+.reasoning-card-markdown :deep(.message-list-ordered) {
+  @apply list-decimal;
+}
+
+.reasoning-card-markdown :deep(.message-inline-code) {
+  @apply rounded-md bg-zinc-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-zinc-900;
+}
+
+.reasoning-card-markdown :deep(.message-file-link) {
+  @apply text-zinc-700 underline decoration-zinc-300 underline-offset-2;
 }
 
 .plan-card-header {
@@ -4409,11 +5215,19 @@ onBeforeUnmount(() => {
 }
 
 .worked-separator-text {
-  @apply m-0 text-sm leading-relaxed font-normal text-slate-800;
+  @apply m-0 text-sm leading-relaxed font-normal text-slate-700;
+}
+
+.worked-summary-copy {
+  @apply min-w-0 flex flex-col items-center gap-0.5;
+}
+
+.worked-summary-meta {
+  @apply m-0 text-xs leading-4 text-zinc-400;
 }
 
 .worked-details {
-  @apply flex flex-col gap-1.5 pt-2;
+  @apply flex flex-col gap-1.5 pt-2.5;
 }
 
 .worked-cmd-item {

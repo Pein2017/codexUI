@@ -84,6 +84,33 @@ export type CommandExecutionData = {
   exitCode: number | null
 }
 
+export type McpToolCallData = {
+  server: string
+  tool: string
+  status: 'inProgress' | 'completed' | 'failed'
+  argumentsText: string
+  progressText: string
+  resultText: string
+  errorText: string
+}
+
+export type CollabAgentStateData = {
+  agentId: string
+  status: string
+  message: string
+}
+
+export type CollabToolCallData = {
+  tool: 'spawnAgent' | 'sendInput' | 'resumeAgent' | 'wait' | 'closeAgent' | string
+  status: 'inProgress' | 'completed' | 'failed'
+  senderThreadId: string
+  receiverThreadIds: string[]
+  promptText: string
+  model: string
+  reasoningEffort: string
+  agentStates: CollabAgentStateData[]
+}
+
 export type UiFileAttachment = { label: string; path: string }
 export type UiFileChangeOperation = 'add' | 'delete' | 'update'
 export type UiFileChangeStatus = 'inProgress' | 'completed' | 'failed' | 'declined'
@@ -198,6 +225,8 @@ export type UiMessage = {
   rawPayload?: string
   isUnhandled?: boolean
   commandExecution?: CommandExecutionData
+  mcpToolCall?: McpToolCallData
+  collabToolCall?: CollabToolCallData
   plan?: UiPlanData
   turnId?: string
   turnIndex?: number
@@ -225,9 +254,19 @@ export type UiServerRequestReply = {
 
 export type UiLiveOverlay = {
   activityLabel: string
+  activitySummaryText: string
   activityDetails: string[]
+  backgroundAgents: Array<{
+    threadId: string
+    title: string
+    status: string
+    message: string
+    addedLineCount: number
+    removedLineCount: number
+  }>
   reasoningText: string
   errorText: string
+  updatedAtMs: number | null
 }
 
 export type UiCreditsSnapshot = {
