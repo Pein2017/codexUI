@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, mkdir, stat, lstat, readlink, symlink } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, mkdir, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
@@ -996,43 +996,26 @@ async function autoPushSyncedSkills(appServer: AppServerLike): Promise<void> {
   await syncInstalledSkillsFolderToRepo(state.githubToken, state.repoOwner, state.repoName, installedMap)
 }
 
-async function ensureCodexAgentsSymlinkToSkillsAgents(): Promise<void> {
+async function ensureCodexAgentsFilesArePlainFiles(): Promise<void> {
   const codexHomeDir = getCodexHomeDir()
-  const skillsAgentsPath = join(codexHomeDir, 'skills', 'AGENTS.md')
+  const skillsDir = join(codexHomeDir, 'skills')
+  const skillsAgentsPath = join(skillsDir, 'AGENTS.md')
   const codexAgentsPath = join(codexHomeDir, 'AGENTS.md')
-  await mkdir(join(codexHomeDir, 'skills'), { recursive: true })
-  let copiedFromCodex = false
+  await mkdir(skillsDir, { recursive: true })
+  let content = ''
   try {
-    const codexAgentsStat = await lstat(codexAgentsPath)
-    if (codexAgentsStat.isFile() || codexAgentsStat.isSymbolicLink()) {
-      const content = await readFile(codexAgentsPath, 'utf8')
-      await writeFile(skillsAgentsPath, content, 'utf8')
-      copiedFromCodex = true
-    } else {
-      await rm(codexAgentsPath, { force: true, recursive: true })
-    }
-  } catch {}
-  if (!copiedFromCodex) {
+    content = await readFile(codexAgentsPath, 'utf8')
+  } catch {
     try {
-      const skillsAgentsStat = await stat(skillsAgentsPath)
-      if (!skillsAgentsStat.isFile()) {
-        await rm(skillsAgentsPath, { force: true, recursive: true })
-        await writeFile(skillsAgentsPath, '', 'utf8')
-      }
+      content = await readFile(skillsAgentsPath, 'utf8')
     } catch {
-      await writeFile(skillsAgentsPath, '', 'utf8')
+      content = ''
     }
   }
-  const relativeTarget = join('skills', 'AGENTS.md')
-  try {
-    const current = await lstat(codexAgentsPath)
-    if (current.isSymbolicLink()) {
-      const existingTarget = await readlink(codexAgentsPath)
-      if (existingTarget === relativeTarget) return
-    }
-    await rm(codexAgentsPath, { force: true, recursive: true })
-  } catch {}
-  await symlink(relativeTarget, codexAgentsPath)
+  await rm(skillsAgentsPath, { force: true, recursive: true })
+  await rm(codexAgentsPath, { force: true, recursive: true })
+  await writeFile(skillsAgentsPath, content, 'utf8')
+  await writeFile(codexAgentsPath, content, 'utf8')
 }
 
 async function runSkillsSyncStartup(appServer: AppServerLike): Promise<void> {
@@ -1043,8 +1026,8 @@ async function runSkillsSyncStartup(appServer: AppServerLike): Promise<void> {
   startupSyncStatus.branch = PRIVATE_SYNC_BRANCH
   try {
     const state = await readSkillsSyncState()
+    await ensureCodexAgentsFilesArePlainFiles()
     if (!state.githubToken) {
-      await ensureCodexAgentsSymlinkToSkillsAgents()
       if (!isAndroidLikeRuntime()) {
         startupSyncStatus.mode = 'idle'
         startupSyncStatus.lastAction = 'skip-upstream-non-android'
