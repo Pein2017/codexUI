@@ -125,9 +125,13 @@ This file tracks manual regression and feature verification steps.
 8. Select thread A and confirm the blue dot clears after the thread is opened.
 9. Let at least two threads show blue unread dots, open the `Threads` organize menu, and click `Mark all seen`.
 10. Confirm all blue unread dots clear immediately while any still-running thread keeps its spinner.
-11. Hover a thread status indicator on desktop and confirm it exposes `Running` or `New since opened` as the status meaning.
-12. Reload the web page again without generating any new thread activity.
-13. Confirm thread A and the other historical threads still render without a blue dot after the reload.
+11. Use the new `All / Running / New` status filter row under `Threads` and switch to `Running`.
+12. Confirm only currently running threads remain visible in both project view and chronological view.
+13. Switch to `New` and confirm only blue-dotted threads remain visible.
+14. Combine a search query with `Running` or `New` and confirm the filter applies within the current search results instead of ignoring search.
+15. Hover a thread status indicator on desktop and confirm it exposes `Running` or `New since opened` as the status meaning.
+16. Reload the web page again without generating any new thread activity.
+17. Confirm thread A and the other historical threads still render without a blue dot after the reload.
 
 #### Expected Results
 - Historical completed threads are treated as already seen when the page first opens.
@@ -135,6 +139,8 @@ This file tracks manual regression and feature verification steps.
 - Running threads continue to show the spinner while work is in progress.
 - Opening a blue-dotted thread clears that blue dot.
 - `Mark all seen` clears all current blue dots in one action without affecting running-thread spinners.
+- The `All / Running / New` filter row narrows the thread list consistently in both project and chronological views.
+- Search and status filters compose correctly instead of overriding each other.
 - Thread status indicators expose a clear semantic label for hover/accessibility.
 - Reloading the page resets the unread baseline so stale historical dots do not accumulate across sessions.
 

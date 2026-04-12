@@ -115,7 +115,42 @@
       </template>
     </SidebarMenuRow>
 
-    <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">No matching threads</p>
+    <div
+      v-if="statusFilterCounts.all > 0"
+      class="thread-status-filter-row"
+      role="tablist"
+      aria-label="Filter threads by status"
+    >
+      <button
+        class="thread-status-filter-button"
+        type="button"
+        :data-active="threadStatusFilter === 'all' ? 'true' : 'false'"
+        @click="setThreadStatusFilter('all')"
+      >
+        <span>All</span>
+        <span class="thread-status-filter-count">{{ statusFilterCounts.all }}</span>
+      </button>
+      <button
+        class="thread-status-filter-button"
+        type="button"
+        :data-active="threadStatusFilter === 'running' ? 'true' : 'false'"
+        @click="setThreadStatusFilter('running')"
+      >
+        <span>Running</span>
+        <span class="thread-status-filter-count">{{ statusFilterCounts.running }}</span>
+      </button>
+      <button
+        class="thread-status-filter-button"
+        type="button"
+        :data-active="threadStatusFilter === 'new' ? 'true' : 'false'"
+        @click="setThreadStatusFilter('new')"
+      >
+        <span>New</span>
+        <span class="thread-status-filter-count">{{ statusFilterCounts.new }}</span>
+      </button>
+    </div>
+
+    <p v-if="showEmptyState" class="thread-tree-no-results">{{ emptyStateText }}</p>
 
     <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">Loading threads...</p>
 
@@ -493,6 +528,7 @@ type DragPointerSample = {
 }
 
 type MenuDirection = 'up' | 'down'
+type ThreadStatusFilter = 'all' | 'running' | 'new'
 
 const DRAG_START_THRESHOLD_PX = 4
 const PROJECT_GROUP_EXPANDED_GAP_PX = 6
@@ -528,7 +564,9 @@ const organizeMenuWrapRef = ref<HTMLElement | null>(null)
 const openThreadMenuPanelRef = ref<HTMLElement | null>(null)
 const isOrganizeMenuOpen = ref(false)
 const THREAD_VIEW_MODE_STORAGE_KEY = 'codex-web-local.thread-view-mode.v1'
+const THREAD_STATUS_FILTER_STORAGE_KEY = 'codex-web-local.thread-status-filter.v1'
 const threadViewMode = ref<'project' | 'chronological'>(loadThreadViewMode())
+const threadStatusFilter = ref<ThreadStatusFilter>(loadThreadStatusFilter())
 const projectGroupResizeObserver =
   typeof window !== 'undefined'
     ? new ResizeObserver((entries) => {
@@ -563,6 +601,14 @@ function loadThreadViewMode(): 'project' | 'chronological' {
   return raw === 'chronological' ? 'chronological' : 'project'
 }
 
+function loadThreadStatusFilter(): ThreadStatusFilter {
+  if (typeof window === 'undefined') return 'all'
+
+  const raw = window.localStorage.getItem(THREAD_STATUS_FILTER_STORAGE_KEY)
+  if (raw === 'running' || raw === 'new') return raw
+  return 'all'
+}
+
 collapsedProjects.value = loadCollapsedState()
 
 watch(
@@ -577,6 +623,11 @@ watch(
 watch(threadViewMode, (value) => {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(THREAD_VIEW_MODE_STORAGE_KEY, value)
+})
+
+watch(threadStatusFilter, (value) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(THREAD_STATUS_FILTER_STORAGE_KEY, value)
 })
 
 const normalizedSearchQuery = computed(() => props.searchQuery.trim().toLowerCase())
@@ -597,12 +648,46 @@ function threadMatchesSearch(thread: UiThread): boolean {
   return thread.title.toLowerCase().includes(q) || thread.preview.toLowerCase().includes(q)
 }
 
-const filteredGroups = computed<UiProjectGroup[]>(() => {
+function threadMatchesStatusFilter(thread: UiThread): boolean {
+  if (threadStatusFilter.value === 'running') return thread.inProgress
+  if (threadStatusFilter.value === 'new') return thread.unread
+  return true
+}
+
+function threadMatchesVisibleFilters(thread: UiThread): boolean {
+  return threadMatchesSearch(thread) && threadMatchesStatusFilter(thread)
+}
+
+const searchFilteredGroups = computed<UiProjectGroup[]>(() => {
   if (!isSearchActive.value) return props.groups
   return props.groups
     .map((group) => ({
       ...group,
       threads: group.threads.filter(threadMatchesSearch),
+    }))
+    .filter((group) => group.threads.length > 0)
+})
+
+const statusFilterCounts = computed(() =>
+  searchFilteredGroups.value.reduce(
+    (counts, group) => {
+      for (const thread of group.threads) {
+        counts.all += 1
+        if (thread.inProgress) counts.running += 1
+        if (thread.unread) counts.new += 1
+      }
+      return counts
+    },
+    { all: 0, running: 0, new: 0 },
+  ),
+)
+
+const filteredGroups = computed<UiProjectGroup[]>(() => {
+  if (threadStatusFilter.value === 'all') return searchFilteredGroups.value
+  return searchFilteredGroups.value
+    .map((group) => ({
+      ...group,
+      threads: group.threads.filter(threadMatchesStatusFilter),
     }))
     .filter((group) => group.threads.length > 0)
 })
@@ -649,7 +734,7 @@ const threadProjectNameById = computed(() => {
 })
 const unpinnedThreadsByProjectName = computed(() => {
   const map = new Map<string, UiThread[]>()
-  for (const group of props.groups) {
+  for (const group of filteredGroups.value) {
     const rows = group.threads.filter((thread) => !pinnedThreadIdSet.value.has(thread.id))
     map.set(group.projectName, rows)
   }
@@ -675,13 +760,30 @@ const pinnedThreads = computed(() =>
   pinnedThreadIds.value
     .map((threadId) => threadById.value.get(threadId) ?? null)
     .filter((thread): thread is UiThread => thread !== null)
-    .filter(threadMatchesSearch),
+    .filter(threadMatchesVisibleFilters),
 )
 
 const unreadThreadCount = computed(() =>
   props.groups.reduce((count, group) => (
     count + group.threads.reduce((groupCount, thread) => groupCount + (thread.unread ? 1 : 0), 0)
   ), 0),
+)
+
+const hasVisibleThreads = computed(() => pinnedThreads.value.length > 0 || filteredGroups.value.length > 0)
+
+const emptyStateText = computed(() => {
+  if (isSearchActive.value) {
+    if (threadStatusFilter.value === 'running') return 'No running threads match your search'
+    if (threadStatusFilter.value === 'new') return 'No new threads match your search'
+    return 'No matching threads'
+  }
+  if (threadStatusFilter.value === 'running') return 'No running threads'
+  if (threadStatusFilter.value === 'new') return 'No new threads'
+  return 'No threads'
+})
+
+const showEmptyState = computed(() =>
+  !hasVisibleThreads.value && (isSearchActive.value || threadStatusFilter.value !== 'all'),
 )
 
 const projectedDropProjectIndex = computed<number | null>(() => {
@@ -915,6 +1017,10 @@ function toggleOrganizeMenu(): void {
 function setThreadViewMode(mode: 'project' | 'chronological'): void {
   threadViewMode.value = mode
   isOrganizeMenuOpen.value = false
+}
+
+function setThreadStatusFilter(filter: ThreadStatusFilter): void {
+  threadStatusFilter.value = filter
 }
 
 function toggleProjectMenu(projectName: string): void {
@@ -1610,6 +1716,22 @@ onBeforeUnmount(() => {
 
 .thread-tree-header {
   @apply text-sm font-normal text-zinc-500 select-none;
+}
+
+.thread-status-filter-row {
+  @apply mb-1 flex flex-wrap items-center gap-1 px-0.5;
+}
+
+.thread-status-filter-button {
+  @apply inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-800;
+}
+
+.thread-status-filter-button[data-active='true'] {
+  @apply border-zinc-300 bg-zinc-200 text-zinc-900;
+}
+
+.thread-status-filter-count {
+  @apply rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] leading-none text-zinc-500;
 }
 
 .organize-menu-wrap {
