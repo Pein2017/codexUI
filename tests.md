@@ -107,6 +107,40 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Restore each tested thread to its preferred runtime selection if needed.
 
+### Feature: Thread list status reflects only this web session
+
+#### Prerequisites
+- App is running from this repository.
+- At least one existing completed thread from an earlier day/session is visible in the sidebar.
+- The app can run one thread in the background while another thread remains selected.
+
+#### Steps
+1. Open the web UI fresh in a new browser tab or reload the page.
+2. Inspect several historical completed threads in the sidebar before opening them.
+3. Confirm those older threads do not show a blue unread dot immediately after page load.
+4. Open thread A, send a prompt that takes long enough to observe in-progress state, then switch to another thread or back to the home screen.
+5. Confirm thread A shows the spinning working indicator while it is still running.
+6. Wait for thread A to finish without selecting it again.
+7. Confirm thread A changes from the spinner to a blue unread dot after completion.
+8. Select thread A and confirm the blue dot clears after the thread is opened.
+9. Let at least two threads show blue unread dots, open the `Threads` organize menu, and click `Mark all seen`.
+10. Confirm all blue unread dots clear immediately while any still-running thread keeps its spinner.
+11. Hover a thread status indicator on desktop and confirm it exposes `Running` or `New since opened` as the status meaning.
+12. Reload the web page again without generating any new thread activity.
+13. Confirm thread A and the other historical threads still render without a blue dot after the reload.
+
+#### Expected Results
+- Historical completed threads are treated as already seen when the page first opens.
+- Only threads that produce new output during the current web page session gain a blue unread dot.
+- Running threads continue to show the spinner while work is in progress.
+- Opening a blue-dotted thread clears that blue dot.
+- `Mark all seen` clears all current blue dots in one action without affecting running-thread spinners.
+- Thread status indicators expose a clear semantic label for hover/accessibility.
+- Reloading the page resets the unread baseline so stale historical dots do not accumulate across sessions.
+
+#### Rollback/Cleanup
+- Wait for any test prompt to finish or interrupt it if it should not keep running.
+
 ### Feature: Telegram bot token stored in dedicated global file
 
 #### Prerequisites

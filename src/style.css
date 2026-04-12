@@ -53,6 +53,22 @@
   @apply border-zinc-700 bg-zinc-800;
 }
 
+:root.dark .sidebar-settings-mobile-header {
+  @apply border-zinc-700 bg-zinc-800;
+}
+
+:root.dark .sidebar-settings-mobile-handle {
+  @apply bg-zinc-600;
+}
+
+:root.dark .sidebar-settings-mobile-title {
+  @apply text-zinc-100;
+}
+
+:root.dark .sidebar-settings-mobile-close {
+  @apply border-zinc-600 bg-zinc-700 text-zinc-300 hover:bg-zinc-600 hover:text-zinc-100;
+}
+
 :root.dark .sidebar-settings-row {
   @apply text-zinc-300 hover:bg-zinc-700;
 }

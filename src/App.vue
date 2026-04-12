@@ -64,88 +64,43 @@
             @browse-thread-files="onBrowseThreadFiles"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
+            @mark-all-seen="markAllThreadsAsRead"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @export-thread="onExportThread" />
         </div>
 
+        <Transition name="settings-backdrop">
+          <div
+            v-if="isSettingsOpen && isMobile && !isSidebarCollapsed"
+            class="sidebar-settings-backdrop"
+            @click="closeSettingsPanel"
+          ></div>
+        </Transition>
+
         <div v-if="!isSidebarCollapsed" class="sidebar-settings-area">
           <Transition name="settings-panel">
-            <div v-if="isSettingsOpen" class="sidebar-settings-panel">
-              <div class="sidebar-settings-account-section">
-                <div class="sidebar-settings-account-header">
-                  <div class="sidebar-settings-account-header-main">
-                    <span class="sidebar-settings-account-title">Accounts</span>
-                    <span class="sidebar-settings-account-count">{{ accounts.length }}</span>
-                  </div>
+            <div
+              v-if="isSettingsOpen"
+              class="sidebar-settings-panel"
+              role="dialog"
+              :aria-modal="isMobile ? 'true' : undefined"
+              aria-label="Settings"
+            >
+              <div class="sidebar-settings-mobile-header">
+                <div class="sidebar-settings-mobile-handle" aria-hidden="true"></div>
+                <div class="sidebar-settings-mobile-header-row">
+                  <p class="sidebar-settings-mobile-title">Settings</p>
                   <button
-                    class="sidebar-settings-account-refresh"
+                    class="sidebar-settings-mobile-close"
                     type="button"
-                    :disabled="isRefreshingAccounts || isSwitchingAccounts"
-                    @click="onRefreshAccounts"
+                    aria-label="Close settings"
+                    @click="closeSettingsPanel"
                   >
-                    {{ isRefreshingAccounts ? 'Reloading…' : 'Reload' }}
+                    <IconTablerX class="sidebar-settings-mobile-close-icon" />
                   </button>
                 </div>
-                <p v-if="accountActionError" class="sidebar-settings-account-error">{{ accountActionError }}</p>
-                <p v-if="accounts.length === 0" class="sidebar-settings-account-empty">
-                  Run `codex login`, then click reload.
-                </p>
-                <div v-else class="sidebar-settings-account-list">
-                  <article
-                    v-for="account in accounts"
-                    :key="account.accountId"
-                    class="sidebar-settings-account-item"
-                    :class="{
-                      'is-active': account.isActive,
-                      'is-unavailable': isAccountUnavailable(account),
-                      'is-confirming-remove': isRemoveConfirmationActive(account),
-                      'is-remove-visible': isRemoveVisible(account),
-                    }"
-                    :title="buildAccountTitle(account)"
-                    @mouseenter="onAccountCardPointerEnter(account.accountId)"
-                    @mouseleave="onAccountCardPointerLeave(account.accountId)"
-                  >
-                    <div class="sidebar-settings-account-main">
-                      <p class="sidebar-settings-account-email">{{ account.email || 'Account' }}</p>
-                      <p class="sidebar-settings-account-meta">
-                        {{ formatAccountMeta(account) }}
-                      </p>
-                      <p class="sidebar-settings-account-quota">
-                        {{ formatAccountQuota(account) }}
-                      </p>
-                      <p class="sidebar-settings-account-id">
-                        Workspace {{ shortAccountId(account.accountId) }}
-                      </p>
-                    </div>
-                    <div class="sidebar-settings-account-actions">
-                      <button
-                        class="sidebar-settings-account-switch"
-                        type="button"
-                        :disabled="isAccountActionDisabled(account) || account.isActive || isAccountUnavailable(account)"
-                        @click="onSwitchAccount(account.accountId)"
-                      >
-                        {{ getAccountSwitchLabel(account) }}
-                      </button>
-                      <button
-                        class="sidebar-settings-account-remove"
-                        :class="{
-                          'is-visible': isRemoveVisible(account),
-                          'is-confirming': isRemoveConfirmationActive(account),
-                        }"
-                        type="button"
-                        :disabled="isAccountActionDisabled(account)"
-                        @click="onRemoveAccount(account.accountId)"
-                      >
-                        {{ getAccountRemoveLabel(account) }}
-                      </button>
-                    </div>
-                  </article>
-                </div>
               </div>
-              <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.sendWithEnter" @click="toggleSendWithEnter">
-                <span class="sidebar-settings-label">Require ⌘ + enter to send</span>
-                <span class="sidebar-settings-toggle" :class="{ 'is-on': !sendWithEnter }" />
-              </button>
+              <div class="sidebar-settings-panel-body">
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.inProgressSendMode" @click="cycleInProgressSendMode">
                 <span class="sidebar-settings-label">When busy, send as</span>
                 <span class="sidebar-settings-value">{{ inProgressSendMode === 'steer' ? 'Steer' : 'Queue' }}</span>
@@ -165,28 +120,6 @@
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.dictationAutoSend" @click="toggleDictationAutoSend">
                 <span class="sidebar-settings-label">Auto send dictation</span>
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
-              </button>
-
-              <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.githubTrendingProjects" @click="toggleGithubTrendingProjects">
-                <span class="sidebar-settings-label">GitHub trending projects</span>
-                <span class="sidebar-settings-toggle" :class="{ 'is-on': showGithubTrendingProjects }" />
-              </button>
-              <div class="sidebar-settings-row sidebar-settings-row--select" :title="SETTINGS_HELP.dictationLanguage">
-                <span class="sidebar-settings-label">Dictation language</span>
-                <ComposerDropdown
-                  class="sidebar-settings-language-dropdown"
-                  :model-value="dictationLanguage"
-                  :options="dictationLanguageOptions"
-                  placeholder="Auto-detect"
-                  open-direction="up"
-                  :enable-search="true"
-                  search-placeholder="Search language..."
-                  @update:model-value="onDictationLanguageChange"
-                />
-              </div>
-              <button class="sidebar-settings-row" type="button" aria-live="polite" @click="onConnectTelegramBot">
-                <span class="sidebar-settings-label">Telegram</span>
-                <span class="sidebar-settings-value">{{ telegramStatusText }}</span>
               </button>
               <div
                 v-if="showThreadContextBadge"
@@ -276,9 +209,10 @@
               <div class="sidebar-settings-build-label" aria-label="Worktree name and version">
                 WT {{ worktreeName }} · v{{ appVersion }}
               </div>
+              </div>
             </div>
           </Transition>
-          <button class="sidebar-settings-button" type="button" @click="isSettingsOpen = !isSettingsOpen">
+          <button class="sidebar-settings-button" type="button" @click="toggleSettingsPanel">
             <IconTablerSettings class="sidebar-settings-icon" />
             <span>Settings</span>
             <span class="sidebar-settings-button-version">
@@ -466,7 +400,7 @@
                   <strong class="worktree-init-status-title">{{ worktreeInitStatus.title }}</strong>
                   <span class="worktree-init-status-message">{{ worktreeInitStatus.message }}</span>
                 </div>
-                <div v-if="showGithubTrendingProjects" class="new-thread-trending">
+                <div class="new-thread-trending">
                   <div class="new-thread-trending-header">
                     <p class="new-thread-trending-title">Trending GitHub projects</p>
                     <ComposerDropdown
@@ -625,27 +559,21 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { useMobile } from './composables/useMobile'
 import {
-  configureTelegramBot,
   createWorktree,
   getGithubProjectsForScope,
-  getAccounts,
   createLocalDirectory,
   getHomeDirectory,
   getProjectRootSuggestion,
   getSessionStatusOverview,
-  getTelegramStatus,
   getWorkspaceRootsState,
   listLocalDirectories,
   openProjectRoot,
   reloadMcpServerConfig,
-  removeAccount,
-  refreshAccountsFromAuth,
   searchThreads,
-  switchAccount,
 } from './api/codexGateway'
-import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
+import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed, ThreadComposerSlashCommand } from './components/content/ThreadComposer.vue'
-import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, SessionStatusOverview, TelegramStatus } from './api/codexGateway'
+import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, SessionStatusOverview } from './api/codexGateway'
 import { getPathLeafName, getPathParent, normalizePathForUi } from './pathUtils.js'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
@@ -656,15 +584,11 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const worktreeName = import.meta.env.VITE_WORKTREE_NAME ?? 'unknown'
 const appVersion = import.meta.env.VITE_APP_VERSION ?? 'unknown'
 const SETTINGS_HELP = {
-  sendWithEnter: 'When enabled, press Enter to send. When disabled, use Command+Enter to send.',
   inProgressSendMode: 'If a turn is still running, choose whether a new prompt should steer the current turn or be queued.',
   appearance: 'Switch between system theme, light mode, and dark mode.',
   chatWidth: 'Choose how wide the conversation column and composer can grow on desktop screens.',
   dictationClickToToggle: 'Use click-to-start and click-to-stop dictation instead of hold-to-talk.',
   dictationAutoSend: 'Automatically send transcribed dictation when recording stops.',
-
-  githubTrendingProjects: 'Show or hide GitHub trending project cards on the new thread screen.',
-  dictationLanguage: 'Choose transcription language or keep auto-detect.',
 } as const
 
 type ChatWidthMode = 'standard' | 'wide' | 'extra-wide'
@@ -817,7 +741,6 @@ const {
   messages,
   isLoadingThreads,
   isLoadingMessages,
-  isSendingMessage,
   isInterruptingTurn,
   isUpdatingSpeedMode,
   refreshAll,
@@ -844,6 +767,7 @@ const {
   removeProject,
   reorderProject,
   pinProjectToTop,
+  markAllThreadsAsRead,
   compactSelectedThread,
   startPolling,
   stopPolling,
@@ -886,21 +810,12 @@ const sessionStatusOverview = ref<SessionStatusOverview | null>(null)
 const isSessionStatusLoading = ref(false)
 const isReloadingMcp = ref(false)
 const createFolderInputRef = ref<HTMLInputElement | null>(null)
-const accounts = ref<UiAccountEntry[]>([])
-const isRefreshingAccounts = ref(false)
-const isSwitchingAccounts = ref(false)
-const removingAccountId = ref('')
-const confirmingRemoveAccountId = ref('')
-const hoveredAccountId = ref('')
-const accountActionError = ref('')
 const SEND_WITH_ENTER_KEY = 'codex-web-local.send-with-enter.v1'
 const IN_PROGRESS_SEND_MODE_KEY = 'codex-web-local.in-progress-send-mode.v1'
 const DARK_MODE_KEY = 'codex-web-local.dark-mode.v1'
 const DICTATION_CLICK_TO_TOGGLE_KEY = 'codex-web-local.dictation-click-to-toggle.v1'
 const DICTATION_AUTO_SEND_KEY = 'codex-web-local.dictation-auto-send.v1'
 const DICTATION_LANGUAGE_KEY = 'codex-web-local.dictation-language.v1'
-
-const GITHUB_TRENDING_PROJECTS_KEY = 'codex-web-local.github-trending-projects.v1'
 const CHAT_WIDTH_KEY = 'codex-web-local.chat-width.v1'
 const MOBILE_RESUME_RELOAD_MIN_HIDDEN_MS = 400
 const sendWithEnter = ref(loadBoolPref(SEND_WITH_ENTER_KEY, true))
@@ -910,9 +825,6 @@ const chatWidth = ref<ChatWidthMode>(loadChatWidthPref())
 const dictationClickToToggle = ref(loadBoolPref(DICTATION_CLICK_TO_TOGGLE_KEY, false))
 const dictationAutoSend = ref(loadBoolPref(DICTATION_AUTO_SEND_KEY, true))
 const dictationLanguage = ref(loadDictationLanguagePref())
-const dictationLanguageOptions = computed(() => buildDictationLanguageOptions())
-
-const showGithubTrendingProjects = ref(loadBoolPref(GITHUB_TRENDING_PROJECTS_KEY, true))
 const isCreateFolderOpen = ref(false)
 const createFolderDraft = ref('')
 const createFolderError = ref('')
@@ -926,18 +838,9 @@ const isExistingFolderLoading = ref(false)
 const isOpeningExistingFolder = ref(false)
 const showHiddenFolders = ref(false)
 const existingFolderFilter = ref('')
-const telegramStatus = ref<TelegramStatus>({
-  configured: false,
-  active: false,
-  mappedChats: 0,
-  mappedThreads: 0,
-  lastError: '',
-})
 const mobileHiddenAtMs = ref<number | null>(null)
 const mobileResumeReloadTriggered = ref(false)
 const mobileResumeSyncInProgress = ref(false)
-let accountStatePollTimer: number | null = null
-let isAccountStatePollInFlight = false
 let existingFolderBrowseRequestId = 0
 
 const routeThreadId = computed(() => {
@@ -999,12 +902,6 @@ const composerCwd = computed(() => {
 })
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && selectedThreadId.value.trim().length > 0)
-const isAccountSwitchBlocked = computed(() =>
-  isSendingMessage.value ||
-  isInterruptingTurn.value ||
-  isSelectedThreadInProgress.value ||
-  selectedThreadServerRequests.value.length > 0,
-)
 
 function formatCompactTokenCount(value: number): string {
   if (!Number.isFinite(value)) return '0'
@@ -1158,13 +1055,6 @@ const contentStyle = computed(() => {
     '--chat-card-max': preset.cardMax,
   }
 })
-const telegramStatusText = computed(() => {
-  if (!telegramStatus.value.configured) return 'Not configured'
-  const base = telegramStatus.value.active ? 'Online' : 'Configured (offline)'
-  const mapped = `${telegramStatus.value.mappedChats} chat(s), ${telegramStatus.value.mappedThreads} thread(s)`
-  const error = telegramStatus.value.lastError ? `, error: ${telegramStatus.value.lastError}` : ''
-  return `${base}, ${mapped}${error}`
-})
 const sessionStatusModelText = computed(() =>
   selectedModelId.value.trim() || sessionStatusOverview.value?.model || 'Default',
 )
@@ -1201,10 +1091,7 @@ onMounted(() => {
   void loadHomeDirectory()
   void loadWorkspaceRootOptionsState()
   void refreshDefaultProjectName()
-  void refreshTelegramStatus()
-  if (showGithubTrendingProjects.value) {
-    void loadTrendingProjects()
-  }
+  void loadTrendingProjects()
 })
 
 onUnmounted(() => {
@@ -1213,10 +1100,6 @@ onUnmounted(() => {
   window.removeEventListener('pageshow', onWindowPageShow)
   window.removeEventListener('focus', onWindowFocus)
   darkModeMediaQuery?.removeEventListener('change', applyDarkMode)
-  if (accountStatePollTimer !== null) {
-    window.clearInterval(accountStatePollTimer)
-    accountStatePollTimer = null
-  }
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
@@ -1248,26 +1131,6 @@ watch(sidebarSearchQuery, (value) => {
   }, 220)
 })
 
-watch(accounts, () => {
-  if (typeof window === 'undefined') return
-  const shouldPoll = accounts.value.some((account) => account.quotaStatus === 'loading')
-  if (!shouldPoll) {
-    if (accountStatePollTimer !== null) {
-      window.clearInterval(accountStatePollTimer)
-      accountStatePollTimer = null
-    }
-    return
-  }
-  if (accountStatePollTimer !== null) return
-  accountStatePollTimer = window.setInterval(() => {
-    if (isAccountStatePollInFlight) return
-    isAccountStatePollInFlight = true
-    void loadAccountsState({ silent: true }).finally(() => {
-      isAccountStatePollInFlight = false
-    })
-  }, 1500)
-}, { deep: true })
-
 watch(isSettingsOpen, (open) => {
   if (!open) {
     activeSettingsSection.value = null
@@ -1278,21 +1141,6 @@ watch(isSettingsOpen, (open) => {
 
 function onSkillsChanged(): void {
   void refreshSkills()
-}
-
-async function refreshTelegramStatus(): Promise<void> {
-  try {
-    telegramStatus.value = await getTelegramStatus()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to load Telegram status'
-    telegramStatus.value = {
-      configured: false,
-      active: false,
-      mappedChats: 0,
-      mappedThreads: 0,
-      lastError: message,
-    }
-  }
 }
 
 async function loadSessionStatusOverview(): Promise<void> {
@@ -1312,6 +1160,14 @@ function openSettingsSection(section: 'status' | 'mcp'): void {
   setSidebarCollapsed(false)
   isSettingsOpen.value = true
   void loadSessionStatusOverview()
+}
+
+function closeSettingsPanel(): void {
+  isSettingsOpen.value = false
+}
+
+function toggleSettingsPanel(): void {
+  isSettingsOpen.value = !isSettingsOpen.value
 }
 
 async function onReloadMcp(): Promise<void> {
@@ -1392,231 +1248,6 @@ async function onExportThread(threadId: string): Promise<void> {
   }
   await nextTick()
   onExportChat()
-}
-
-function shortAccountId(accountId: string): string {
-  return accountId.length > 8 ? accountId.slice(-8) : accountId
-}
-
-function formatAccountMeta(account: UiAccountEntry): string {
-  const segments = [account.planType || 'unknown']
-  if (account.authMode) {
-    segments.unshift(account.authMode)
-  }
-  return segments.join(' · ')
-}
-
-function isPaymentRequiredErrorMessage(value: string | null): boolean {
-  if (!value) return false
-  const normalized = value.toLowerCase()
-  return normalized.includes('payment required') || /\b402\b/.test(normalized)
-}
-
-function isAccountUnavailable(account: UiAccountEntry): boolean {
-  return account.unavailableReason === 'payment_required' || isPaymentRequiredErrorMessage(account.quotaError)
-}
-
-function isAccountActionDisabled(account: UiAccountEntry): boolean {
-  return isRefreshingAccounts.value || isSwitchingAccounts.value || removingAccountId.value.length > 0
-    || (account.isActive && removingAccountId.value !== account.accountId && isAccountSwitchBlocked.value)
-}
-
-function isRemoveConfirmationActive(account: UiAccountEntry): boolean {
-  return confirmingRemoveAccountId.value === account.accountId
-}
-
-function isRemoveVisible(account: UiAccountEntry): boolean {
-  return hoveredAccountId.value === account.accountId || isRemoveConfirmationActive(account)
-}
-
-function getAccountSwitchLabel(account: UiAccountEntry): string {
-  if (isAccountUnavailable(account)) return 'Unavailable'
-  if (account.isActive) return 'Active'
-  if (isSwitchingAccounts.value) return 'Switching…'
-  return 'Switch'
-}
-
-function getAccountRemoveLabel(account: UiAccountEntry): string {
-  if (removingAccountId.value === account.accountId) return 'Removing…'
-  if (isRemoveConfirmationActive(account)) return 'Click again to remove'
-  return 'Remove'
-}
-
-function onAccountCardPointerEnter(accountId: string): void {
-  hoveredAccountId.value = accountId
-}
-
-function onAccountCardPointerLeave(accountId: string): void {
-  if (hoveredAccountId.value === accountId) {
-    hoveredAccountId.value = ''
-  }
-  if (removingAccountId.value === accountId) return
-  if (confirmingRemoveAccountId.value === accountId) {
-    confirmingRemoveAccountId.value = ''
-  }
-}
-
-function pickWeeklyQuotaWindow(account: UiAccountEntry) {
-  const quota = account.quotaSnapshot
-  if (!quota) return null
-  const windows = [quota?.primary, quota?.secondary].filter((quotaWindow): quotaWindow is UiRateLimitWindow => quotaWindow !== null)
-  const exactWeekly = windows.find((quotaWindow) => quotaWindow.windowMinutes === 7 * 24 * 60)
-  if (exactWeekly) {
-    return exactWeekly
-  }
-  const longerWindow = windows
-    .filter((quotaWindow) => typeof quotaWindow.windowMinutes === 'number' && quotaWindow.windowMinutes >= 7 * 24 * 60)
-    .sort((first, second) => (first.windowMinutes ?? 0) - (second.windowMinutes ?? 0))[0] ?? null
-  if (longerWindow) {
-    return longerWindow
-  }
-  return quota.secondary ?? null
-}
-
-function formatResetDateCompact(resetsAt: number | null): string {
-  if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return ''
-  const date = new Date(resetsAt * 1000)
-  return `${date.getMonth() + 1}月${date.getDate()}日`
-}
-
-function formatAccountQuota(account: UiAccountEntry): string {
-  if (isAccountUnavailable(account)) {
-    return account.quotaError || '402 Payment Required'
-  }
-  const quota = account.quotaSnapshot
-  const window = pickWeeklyQuotaWindow(account)
-  if (window) {
-    const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)))
-    const refreshDate = formatResetDateCompact(window.resetsAt)
-    return refreshDate
-      ? `${remainingPercent}% weekly remaining · ${refreshDate}`
-      : `${remainingPercent}% weekly remaining`
-  }
-  if (quota?.credits?.unlimited) {
-    return 'Unlimited credits'
-  }
-  if (quota?.credits?.hasCredits && quota.credits.balance) {
-    return `${quota.credits.balance} credits`
-  }
-  if (account.quotaStatus === 'loading') {
-    return 'Loading quota…'
-  }
-  if (account.quotaStatus === 'error') {
-    return account.quotaError || 'Quota unavailable'
-  }
-  return 'Fetching account details…'
-}
-
-function buildAccountTitle(account: UiAccountEntry): string {
-  return [
-    account.email || 'Account',
-    formatAccountMeta(account),
-    isAccountUnavailable(account) ? 'Unavailable account' : null,
-    formatAccountQuota(account),
-    `Workspace ${account.accountId}`,
-  ].filter(Boolean).join('\n')
-}
-
-async function loadAccountsState(options: { silent?: boolean } = {}): Promise<void> {
-  try {
-    const result = await getAccounts()
-    accounts.value = result.accounts
-    if (!result.accounts.some((account) => account.accountId === hoveredAccountId.value)) {
-      hoveredAccountId.value = ''
-    }
-    if (!result.accounts.some((account) => account.accountId === confirmingRemoveAccountId.value)) {
-      confirmingRemoveAccountId.value = ''
-    }
-  } catch (error) {
-    if (options.silent === true) return
-    accountActionError.value = error instanceof Error ? error.message : 'Failed to load accounts'
-  }
-}
-
-async function onRefreshAccounts(): Promise<void> {
-  if (isRefreshingAccounts.value || isSwitchingAccounts.value) return
-  accountActionError.value = ''
-  hoveredAccountId.value = ''
-  confirmingRemoveAccountId.value = ''
-  isRefreshingAccounts.value = true
-  try {
-    const result = await refreshAccountsFromAuth()
-    accounts.value = result.accounts
-    stopPolling()
-    startPolling()
-    void refreshAll({
-      includeSelectedThreadMessages: true,
-    })
-  } catch (error) {
-    accountActionError.value = error instanceof Error ? error.message : 'Failed to refresh accounts'
-  } finally {
-    isRefreshingAccounts.value = false
-  }
-}
-
-async function onSwitchAccount(accountId: string): Promise<void> {
-  if (isSwitchingAccounts.value || isRefreshingAccounts.value) return
-  if (isAccountSwitchBlocked.value) {
-    accountActionError.value = 'Finish the current turn and pending requests before switching accounts.'
-    return
-  }
-  accountActionError.value = ''
-  hoveredAccountId.value = ''
-  confirmingRemoveAccountId.value = ''
-  isSwitchingAccounts.value = true
-  try {
-    const nextActiveAccount = await switchAccount(accountId)
-    accounts.value = accounts.value.map((account) => (
-      account.accountId === accountId
-        ? nextActiveAccount
-        : { ...account, isActive: false }
-    ))
-    stopPolling()
-    startPolling()
-    void refreshAll({
-      includeSelectedThreadMessages: true,
-    })
-    void loadAccountsState({ silent: true })
-  } catch (error) {
-    accountActionError.value = error instanceof Error ? error.message : 'Failed to switch account'
-  } finally {
-    isSwitchingAccounts.value = false
-  }
-}
-
-async function onRemoveAccount(accountId: string): Promise<void> {
-  if (isRefreshingAccounts.value || isSwitchingAccounts.value || removingAccountId.value.length > 0) return
-  const targetAccount = accounts.value.find((account) => account.accountId === accountId) ?? null
-  if (!targetAccount) return
-  if (confirmingRemoveAccountId.value !== accountId) {
-    confirmingRemoveAccountId.value = accountId
-    return
-  }
-  if (targetAccount.isActive && isAccountSwitchBlocked.value) {
-    accountActionError.value = 'Finish the current turn and pending requests before removing the active account.'
-    return
-  }
-
-  const removedWasActive = targetAccount.isActive
-  accountActionError.value = ''
-  confirmingRemoveAccountId.value = ''
-  removingAccountId.value = accountId
-  try {
-    const result = await removeAccount(accountId)
-    accounts.value = result.accounts
-    stopPolling()
-    startPolling()
-    if (removedWasActive) {
-      void refreshAll({
-        includeSelectedThreadMessages: true,
-      })
-    }
-    void loadAccountsState({ silent: true })
-  } catch (error) {
-    accountActionError.value = error instanceof Error ? error.message : 'Failed to remove account'
-  } finally {
-    removingAccountId.value = ''
-  }
 }
 
 function onArchiveThread(threadId: string): void {
@@ -1745,6 +1376,9 @@ async function onOpenThreadFromConversation(payload: { threadId: string }): Prom
 
 function setSidebarCollapsed(nextValue: boolean): void {
   if (isSidebarCollapsed.value === nextValue) return
+  if (nextValue) {
+    closeSettingsPanel()
+  }
   isSidebarCollapsed.value = nextValue
   saveSidebarCollapsed(nextValue)
 }
@@ -1852,23 +1486,6 @@ function onGithubTipsScopeChange(nextValue: string): void {
   githubTipsScope.value = scope
 }
 
-function onConnectTelegramBot(): void {
-  if (typeof window === 'undefined') return
-  const botToken = window.prompt('Telegram bot token')
-  if (!botToken || !botToken.trim()) return
-
-  void configureTelegramBot(botToken.trim())
-    .then(() => {
-      window.alert('Telegram bot configured. Open the bot DM and send /start.')
-      void refreshTelegramStatus()
-    })
-    .catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Failed to connect Telegram bot'
-      window.alert(message)
-      void refreshTelegramStatus()
-    })
-}
-
 function onSelectTrendingProjectTip(project: GithubTrendingProject): void {
   const composer = homeThreadComposerRef.value
   if (!composer) return
@@ -1894,6 +1511,13 @@ function onEditQueuedMessage(messageId: string): void {
   editingQueuedMessageState.value = selectedThreadId.value
     ? { threadId: selectedThreadId.value, queueIndex }
     : null
+  setSelectedCollaborationMode(message.collaborationMode)
+  if (typeof message.modelId === 'string') {
+    setSelectedModelId(message.modelId)
+  }
+  if (typeof message.reasoningEffort === 'string') {
+    setSelectedReasoningEffort(message.reasoningEffort as ReasoningEffort | '')
+  }
   const payload: ComposerDraftPayload = {
     text: message.text,
     imageUrls: [...message.imageUrls],
@@ -2453,11 +2077,6 @@ function loadChatWidthPref(): ChatWidthMode {
   return value === 'standard' || value === 'wide' || value === 'extra-wide' ? value : 'standard'
 }
 
-function toggleSendWithEnter(): void {
-  sendWithEnter.value = !sendWithEnter.value
-  window.localStorage.setItem(SEND_WITH_ENTER_KEY, sendWithEnter.value ? '1' : '0')
-}
-
 function cycleInProgressSendMode(): void {
   inProgressSendMode.value = inProgressSendMode.value === 'steer' ? 'queue' : 'steer'
   window.localStorage.setItem(IN_PROGRESS_SEND_MODE_KEY, inProgressSendMode.value)
@@ -2488,63 +2107,11 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
-
-function toggleGithubTrendingProjects(): void {
-  showGithubTrendingProjects.value = !showGithubTrendingProjects.value
-  window.localStorage.setItem(GITHUB_TRENDING_PROJECTS_KEY, showGithubTrendingProjects.value ? '1' : '0')
-}
-
-function onDictationLanguageChange(nextValue: string): void {
-  const normalized = normalizeToWhisperLanguage(nextValue.trim())
-  const value = normalized || 'auto'
-  dictationLanguage.value = value
-  window.localStorage.setItem(DICTATION_LANGUAGE_KEY, value)
-}
-
 function loadDictationLanguagePref(): string {
   if (typeof window === 'undefined') return 'auto'
   const value = window.localStorage.getItem(DICTATION_LANGUAGE_KEY)?.trim() || 'auto'
   const normalized = normalizeToWhisperLanguage(value)
   return normalized || 'auto'
-}
-
-function buildDictationLanguageOptions(): Array<{ value: string; label: string }> {
-  const options: Array<{ value: string; label: string }> = [{ value: 'auto', label: 'Auto-detect' }]
-  const seen = new Set<string>(['auto'])
-  function formatLanguageLabel(value: string): string {
-    const languageName = WHISPER_LANGUAGES[value] || value
-    const title = languageName.charAt(0).toUpperCase() + languageName.slice(1)
-    return `${title} (${value})`
-  }
-
-  for (const raw of typeof navigator !== 'undefined' ? (navigator.languages ?? []) : []) {
-    const value = normalizeToWhisperLanguage(raw)
-    if (!value || seen.has(value)) continue
-    seen.add(value)
-    options.push({
-      value,
-      label: `Preferred: ${formatLanguageLabel(value)}`,
-    })
-  }
-
-  for (const value of Object.keys(WHISPER_LANGUAGES)) {
-    if (seen.has(value)) continue
-    seen.add(value)
-    options.push({
-      value,
-      label: formatLanguageLabel(value),
-    })
-  }
-
-  const current = dictationLanguage.value.trim()
-  if (current && !seen.has(current)) {
-    options.push({
-      value: current,
-      label: formatLanguageLabel(current),
-    })
-  }
-
-  return options
 }
 
 function normalizeToWhisperLanguage(raw: string): string {
@@ -2601,7 +2168,6 @@ async function initialize(): Promise<void> {
   await refreshAll({
     includeSelectedThreadMessages: true,
   })
-  void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
@@ -2678,18 +2244,6 @@ watch(
 watch(
   () => githubTipsScope.value,
   () => {
-    if (!showGithubTrendingProjects.value) return
-    void loadTrendingProjects()
-  },
-)
-
-watch(
-  () => showGithubTrendingProjects.value,
-  (enabled) => {
-    if (!enabled) {
-      trendingProjects.value = []
-      return
-    }
     void loadTrendingProjects()
   },
 )
@@ -2823,7 +2377,7 @@ async function submitFirstMessageForNewThread(
 @reference "tailwindcss";
 
 .sidebar-root {
-  @apply h-full flex flex-col select-none;
+  @apply h-full min-h-0 flex flex-col overflow-hidden select-none;
 }
 
 .sidebar-root input,
@@ -3219,7 +2773,11 @@ async function submitFirstMessageForNewThread(
 }
 
 .sidebar-settings-area {
-  @apply shrink-0 bg-slate-100 pt-2 px-2 pb-2 border-t border-zinc-200;
+  @apply sticky bottom-0 z-10 shrink-0 bg-slate-100 pt-2 px-2 pb-2 border-t border-zinc-200;
+}
+
+.sidebar-settings-backdrop {
+  @apply fixed inset-0 z-50 bg-black/30;
 }
 
 .sidebar-settings-button {
@@ -3235,127 +2793,43 @@ async function submitFirstMessageForNewThread(
 }
 
 .sidebar-settings-panel {
-  @apply mb-1 rounded-lg border border-zinc-200 bg-white overflow-hidden;
+  @apply mb-1 flex max-h-[min(70vh,calc(100dvh-8rem))] flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm;
+}
+
+.sidebar-settings-panel-body {
+  @apply min-h-0 overflow-y-auto overscroll-contain;
+}
+
+.sidebar-settings-mobile-header {
+  @apply sticky top-0 z-10 block shrink-0 border-b border-zinc-200 bg-white px-3 pb-2 pt-2;
+}
+
+.sidebar-settings-mobile-handle {
+  @apply mx-auto mb-2 h-1 w-10 rounded-full bg-zinc-300;
+}
+
+.sidebar-settings-mobile-header-row {
+  @apply flex items-center justify-between gap-3;
+}
+
+.sidebar-settings-mobile-title {
+  @apply m-0 text-sm font-semibold text-zinc-900;
+}
+
+.sidebar-settings-mobile-close {
+  @apply inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900;
+}
+
+.sidebar-settings-mobile-close-icon {
+  @apply h-4.5 w-4.5;
 }
 
 .sidebar-settings-row {
   @apply flex items-center justify-between w-full px-3 py-2.5 text-sm text-zinc-700 border-0 bg-transparent transition hover:bg-zinc-50 cursor-pointer;
 }
 
-.sidebar-settings-row--select {
-  @apply cursor-default items-center gap-2;
-}
-
-.sidebar-settings-language-dropdown {
-  @apply min-w-0 max-w-52;
-}
-
-.sidebar-settings-language-dropdown :deep(.composer-dropdown-trigger) {
-  @apply h-auto rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700;
-}
-
-.sidebar-settings-language-dropdown :deep(.composer-dropdown-value) {
-  @apply max-w-32;
-}
-
 .sidebar-settings-row + .sidebar-settings-row {
   @apply border-t border-zinc-100;
-}
-
-.sidebar-settings-account-section {
-  @apply border-t border-zinc-100 bg-zinc-50/60 px-3 py-3;
-}
-
-.sidebar-settings-account-header {
-  @apply mb-2 flex items-center justify-between gap-2;
-}
-
-.sidebar-settings-account-header-main {
-  @apply flex items-center gap-2;
-}
-
-.sidebar-settings-account-title {
-  @apply text-sm font-medium text-zinc-800;
-}
-
-.sidebar-settings-account-count {
-  @apply rounded bg-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-600;
-}
-
-.sidebar-settings-account-error {
-  @apply mb-2 rounded-md bg-rose-50 px-2 py-1.5 text-xs text-rose-700;
-}
-
-.sidebar-settings-account-refresh {
-  @apply shrink-0 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
-}
-
-.sidebar-settings-account-empty {
-  @apply text-xs text-zinc-500;
-}
-
-.sidebar-settings-account-list {
-  @apply flex max-h-56 flex-col gap-2 overflow-y-auto;
-}
-
-.sidebar-settings-account-item {
-  @apply flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-2;
-}
-
-.sidebar-settings-account-item.is-active {
-  @apply border-emerald-200 bg-emerald-50;
-}
-
-.sidebar-settings-account-item.is-unavailable {
-  @apply border-rose-200 bg-rose-50;
-}
-
-.sidebar-settings-account-main {
-  @apply min-w-0 flex-1;
-}
-
-.sidebar-settings-account-actions {
-  @apply flex w-24 shrink-0 flex-col items-end gap-1.5;
-}
-
-.sidebar-settings-account-email {
-  @apply truncate text-sm text-zinc-800;
-}
-
-.sidebar-settings-account-meta {
-  @apply truncate text-[11px] text-zinc-500;
-}
-
-.sidebar-settings-account-quota {
-  @apply truncate text-[11px] text-zinc-600;
-}
-
-.sidebar-settings-account-id {
-  @apply mt-1 inline-flex max-w-full rounded-full bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-700;
-}
-
-.sidebar-settings-account-item.is-active .sidebar-settings-account-id {
-  @apply bg-emerald-100 text-emerald-800;
-}
-
-.sidebar-settings-account-item.is-unavailable .sidebar-settings-account-id {
-  @apply bg-rose-100 text-rose-800;
-}
-
-.sidebar-settings-account-switch {
-  @apply min-w-[4.75rem] shrink-0 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-center text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60;
-}
-
-.sidebar-settings-account-remove {
-  @apply invisible shrink-0 rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] leading-4 text-zinc-500 opacity-0 pointer-events-none transition-colors hover:bg-amber-50 disabled:cursor-default disabled:opacity-60;
-}
-
-.sidebar-settings-account-remove.is-visible {
-  @apply visible opacity-100 pointer-events-auto;
-}
-
-.sidebar-settings-account-remove.is-confirming {
-  @apply border-amber-300 bg-amber-50 text-amber-700 font-medium;
 }
 
 .sidebar-settings-label {
@@ -3393,6 +2867,16 @@ async function submitFirstMessageForNewThread(
 .settings-panel-leave-to {
   opacity: 0;
   transform: translateY(8px);
+}
+
+.settings-backdrop-enter-active,
+.settings-backdrop-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.settings-backdrop-enter-from,
+.settings-backdrop-leave-to {
+  opacity: 0;
 }
 
 .sidebar-settings-context-row {
@@ -3473,6 +2957,28 @@ async function submitFirstMessageForNewThread(
 
 .sidebar-settings-build-label {
   @apply border-t border-zinc-100 px-3 py-2 text-[11px] text-zinc-500;
+}
+
+@media (max-width: 767px) {
+  .sidebar-settings-area {
+    @apply relative z-[60] border-t-0 bg-transparent p-0;
+  }
+
+  .sidebar-settings-button {
+    @apply mx-2 rounded-lg px-2 py-2;
+  }
+
+  .sidebar-settings-panel {
+    @apply fixed inset-x-0 bottom-0 z-[60] mb-0 flex max-h-[calc(100dvh-1rem)] flex-col rounded-t-3xl rounded-b-none border-x-0 border-b-0 shadow-2xl;
+  }
+
+  .sidebar-settings-mobile-header {
+    @apply px-4 pb-3 pt-3;
+  }
+
+  .sidebar-settings-panel-body {
+    @apply overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)];
+  }
 }
 
 </style>

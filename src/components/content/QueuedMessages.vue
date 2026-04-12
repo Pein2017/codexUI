@@ -6,7 +6,10 @@
         <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
           d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
-      <span class="queued-row-text">{{ getMessagePreview(msg) }}</span>
+      <div class="queued-row-main">
+        <span class="queued-row-text">{{ getMessagePreview(msg) }}</span>
+        <span v-if="getRuntimeSummary(msg)" class="queued-row-runtime">{{ getRuntimeSummary(msg) }}</span>
+      </div>
       <div class="queued-row-actions">
         <button class="queued-row-edit" type="button" title="Edit queued message" @click="$emit('edit', msg.id)">Edit</button>
         <button class="queued-row-steer" type="button" title="Send now without interrupting work" @click="$emit('steer', msg.id)">Steer</button>
@@ -29,6 +32,8 @@ type QueuedMessageRow = {
   imageUrls?: string[]
   skills?: Array<{ name: string; path: string }>
   fileAttachments?: Array<{ label: string; path: string; fsPath: string }>
+  modelId?: string
+  reasoningEffort?: string
 }
 
 defineProps<{
@@ -56,6 +61,26 @@ function getMessagePreview(message: QueuedMessageRow): string {
 
   return parts.join(', ') || '(empty queued message)'
 }
+
+function formatModelLabel(modelId: string): string {
+  const normalizedModelId = modelId.trim()
+  if (!normalizedModelId) return 'Default model'
+  return normalizedModelId.replace(/^gpt/i, 'GPT')
+}
+
+function formatReasoningLabel(reasoningEffort: string): string {
+  const normalizedEffort = reasoningEffort.trim()
+  if (!normalizedEffort) return 'default thinking'
+  if (normalizedEffort === 'xhigh') return 'Extra high'
+  return `${normalizedEffort.slice(0, 1).toUpperCase()}${normalizedEffort.slice(1)}`
+}
+
+function getRuntimeSummary(message: QueuedMessageRow): string {
+  const modelId = message.modelId?.trim() ?? ''
+  const reasoningEffort = message.reasoningEffort?.trim() ?? ''
+  if (!modelId && !reasoningEffort) return ''
+  return `${formatModelLabel(modelId)} · ${formatReasoningLabel(reasoningEffort)}`
+}
 </script>
 
 <style scoped>
@@ -73,12 +98,20 @@ function getMessagePreview(message: QueuedMessageRow): string {
   @apply flex min-w-0 items-center gap-2 rounded-lg py-1 text-sm;
 }
 
+.queued-row-main {
+  @apply flex min-w-0 flex-1 flex-col gap-0.5;
+}
+
 .queued-row-icon {
   @apply h-4 w-4 shrink-0 text-zinc-400;
 }
 
 .queued-row-text {
-  @apply min-w-0 flex-1 truncate text-zinc-700;
+  @apply min-w-0 truncate text-zinc-700;
+}
+
+.queued-row-runtime {
+  @apply min-w-0 truncate text-[11px] text-zinc-500;
 }
 
 .queued-row-actions {

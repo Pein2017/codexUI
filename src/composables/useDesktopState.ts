@@ -60,7 +60,7 @@ function flattenThreads(groups: UiProjectGroup[]): UiThread[] {
   return groups.flatMap((group) => group.threads)
 }
 
-const READ_STATE_STORAGE_KEY = 'codex-web-local.thread-read-state.v1'
+const LEGACY_THREAD_READ_STATE_STORAGE_KEY = 'codex-web-local.thread-read-state.v1'
 const SCROLL_STATE_STORAGE_KEY = 'codex-web-local.thread-scroll-state.v1'
 const THREAD_TOKEN_USAGE_STORAGE_KEY = 'codex-web-local.thread-token-usage.v1'
 const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
@@ -79,24 +79,13 @@ const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', '
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.2-codex'
 
-function loadReadStateMap(): Record<string, string> {
-  if (typeof window === 'undefined') return {}
-
-  try {
-    const raw = window.localStorage.getItem(READ_STATE_STORAGE_KEY)
-    if (!raw) return {}
-
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as Record<string, string>
-  } catch {
-    return {}
-  }
-}
-
-function saveReadStateMap(state: Record<string, string>): void {
+function clearLegacyThreadReadStateStorage(): void {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(READ_STATE_STORAGE_KEY, JSON.stringify(state))
+  try {
+    window.localStorage.removeItem(LEGACY_THREAD_READ_STATE_STORAGE_KEY)
+  } catch {
+    // Best-effort cleanup only.
+  }
 }
 
 function normalizeCollaborationMode(value: unknown): CollaborationModeKind {
@@ -1099,6 +1088,7 @@ export function useDesktopState() {
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessage[]>>({})
   const queueProcessingByThreadId = ref<Record<string, boolean>>({})
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
+  const pendingSeenSyncByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
@@ -1121,7 +1111,8 @@ export function useDesktopState() {
     readSelectedReasoningEffort(selectedReasoningEffortByContext.value, selectedThreadId.value, defaultReasoningEffort.value),
   )
   const selectedSpeedMode = ref<SpeedMode>('standard')
-  const readStateByThreadId = ref<Record<string, string>>(loadReadStateMap())
+  clearLegacyThreadReadStateStorage()
+  const seenUpdatedAtByThreadId = ref<Record<string, string>>({})
   const scrollStateByThreadId = ref<Record<string, ThreadScrollState>>(loadThreadScrollStateMap())
   const projectOrder = ref<string[]>(loadProjectOrder())
   const projectDisplayNameById = ref<Record<string, string>>(loadProjectDisplayNames())
@@ -1671,17 +1662,62 @@ export function useDesktopState() {
     return requests.length > 0 ? 'response' : null
   }
 
+  function seedSeenUpdatedAtForThreads(threads: UiThread[]): void {
+    let nextSeenByThreadId: Record<string, string> | null = null
+
+    for (const thread of threads) {
+      if (!thread.id || seenUpdatedAtByThreadId.value[thread.id]) continue
+      if (!nextSeenByThreadId) {
+        nextSeenByThreadId = { ...seenUpdatedAtByThreadId.value }
+      }
+      nextSeenByThreadId[thread.id] = thread.updatedAtIso
+    }
+
+    if (nextSeenByThreadId) {
+      seenUpdatedAtByThreadId.value = nextSeenByThreadId
+    }
+  }
+
+  function queueSeenUpdatedAtSync(threadId: string): void {
+    if (!threadId || pendingSeenSyncByThreadId.value[threadId] === true) return
+    pendingSeenSyncByThreadId.value = {
+      ...pendingSeenSyncByThreadId.value,
+      [threadId]: true,
+    }
+  }
+
   function applyThreadFlags(): void {
     const withTitles = applyCachedTitlesToGroups(sourceGroups.value)
+    const currentSeenByThreadId = seenUpdatedAtByThreadId.value
+    const currentPendingSeenSyncByThreadId = pendingSeenSyncByThreadId.value
+    let nextSeenByThreadId: Record<string, string> | null = null
+    let nextPendingSeenSyncByThreadId: Record<string, boolean> | null = null
     const flaggedGroups: UiProjectGroup[] = withTitles.map((group) => ({
       projectName: group.projectName,
       threads: group.threads.map((thread) => {
         const inProgress = inProgressById.value[thread.id] === true
         const pendingRequestState = readPendingRequestState(getThreadPendingRequests(thread.id))
         const isSelected = selectedThreadId.value === thread.id
-        const lastReadIso = readStateByThreadId.value[thread.id]
         const unreadByEvent = eventUnreadByThreadId.value[thread.id] === true
-        const unread = !isSelected && !inProgress && (unreadByEvent || lastReadIso !== thread.updatedAtIso)
+        const seenUpdatedAtIso = currentSeenByThreadId[thread.id] ?? ''
+        const shouldSyncSeen = isSelected || currentPendingSeenSyncByThreadId[thread.id] === true
+        if (shouldSyncSeen && seenUpdatedAtIso !== thread.updatedAtIso) {
+          if (!nextSeenByThreadId) {
+            nextSeenByThreadId = { ...currentSeenByThreadId }
+          }
+          nextSeenByThreadId[thread.id] = thread.updatedAtIso
+        }
+        if (currentPendingSeenSyncByThreadId[thread.id] === true && seenUpdatedAtIso !== thread.updatedAtIso) {
+          if (!nextPendingSeenSyncByThreadId) {
+            nextPendingSeenSyncByThreadId = { ...currentPendingSeenSyncByThreadId }
+          }
+          delete nextPendingSeenSyncByThreadId[thread.id]
+        }
+        const effectiveSeenUpdatedAtIso = shouldSyncSeen ? thread.updatedAtIso : seenUpdatedAtIso
+        const unread = !isSelected && !inProgress && (
+          unreadByEvent
+          || (effectiveSeenUpdatedAtIso.length > 0 && effectiveSeenUpdatedAtIso !== thread.updatedAtIso)
+        )
 
         return {
           ...thread,
@@ -1691,6 +1727,12 @@ export function useDesktopState() {
         }
       }),
     }))
+    if (nextSeenByThreadId) {
+      seenUpdatedAtByThreadId.value = nextSeenByThreadId
+    }
+    if (nextPendingSeenSyncByThreadId) {
+      pendingSeenSyncByThreadId.value = nextPendingSeenSyncByThreadId
+    }
     projectGroups.value = mergeThreadGroups(projectGroups.value, flaggedGroups)
   }
 
@@ -1731,16 +1773,17 @@ export function useDesktopState() {
       projectOrder.value = nextProjectOrder
       saveProjectOrder(projectOrder.value)
     }
+    seedSeenUpdatedAtForThreads(flattenThreads(sourceGroups.value))
     applyThreadFlags()
   }
 
   function pruneThreadScopedState(flatThreads: UiThread[]): void {
     const activeThreadIds = new Set(flatThreads.map((thread) => thread.id))
-    const nextReadState = pruneThreadStateMap(readStateByThreadId.value, activeThreadIds)
-    if (nextReadState !== readStateByThreadId.value) {
-      readStateByThreadId.value = nextReadState
-      saveReadStateMap(nextReadState)
+    const nextSeenState = pruneThreadStateMap(seenUpdatedAtByThreadId.value, activeThreadIds)
+    if (nextSeenState !== seenUpdatedAtByThreadId.value) {
+      seenUpdatedAtByThreadId.value = nextSeenState
     }
+    pendingSeenSyncByThreadId.value = pruneThreadStateMap(pendingSeenSyncByThreadId.value, activeThreadIds)
     const nextScrollState = pruneThreadStateMap(scrollStateByThreadId.value, activeThreadIds)
     if (nextScrollState !== scrollStateByThreadId.value) {
       scrollStateByThreadId.value = nextScrollState
@@ -1776,13 +1819,37 @@ export function useDesktopState() {
     const thread = flattenThreads(sourceGroups.value).find((row) => row.id === threadId)
     if (!thread) return
 
-    readStateByThreadId.value = {
-      ...readStateByThreadId.value,
+    seenUpdatedAtByThreadId.value = {
+      ...seenUpdatedAtByThreadId.value,
       [threadId]: thread.updatedAtIso,
     }
-    saveReadStateMap(readStateByThreadId.value)
+    if (pendingSeenSyncByThreadId.value[threadId]) {
+      pendingSeenSyncByThreadId.value = omitKey(pendingSeenSyncByThreadId.value, threadId)
+    }
     if (eventUnreadByThreadId.value[threadId]) {
       eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, threadId)
+    }
+    applyThreadFlags()
+  }
+
+  function markAllThreadsAsRead(): void {
+    const threads = flattenThreads(sourceGroups.value)
+    if (threads.length === 0) return
+
+    let changedSeenState = false
+    const nextSeenByThreadId = { ...seenUpdatedAtByThreadId.value }
+    for (const thread of threads) {
+      if (!thread.id) continue
+      if (nextSeenByThreadId[thread.id] === thread.updatedAtIso) continue
+      nextSeenByThreadId[thread.id] = thread.updatedAtIso
+      changedSeenState = true
+    }
+    if (changedSeenState) {
+      seenUpdatedAtByThreadId.value = nextSeenByThreadId
+    }
+
+    if (Object.keys(eventUnreadByThreadId.value).length > 0) {
+      eventUnreadByThreadId.value = {}
     }
     applyThreadFlags()
   }
@@ -3196,6 +3263,9 @@ export function useDesktopState() {
     if (!notificationErrorState && notificationThreadId) {
       clearTransientTurnErrorForThread(notificationThreadId)
     }
+    if (notificationThreadId && notificationThreadId === selectedThreadId.value) {
+      queueSeenUpdatedAtSync(notificationThreadId)
+    }
 
     const startedTurn = readTurnStartedInfo(notification)
     if (startedTurn) {
@@ -3618,9 +3688,11 @@ export function useDesktopState() {
         inProgressById.value,
       )
       sourceGroups.value = mergeThreadGroups(sourceGroups.value, mergedWithInProgress)
+      const flatSourceThreads = flattenThreads(sourceGroups.value)
+      seedSeenUpdatedAtForThreads(flatSourceThreads)
       inProgressById.value = pruneThreadStateMap(
         inProgressById.value,
-        new Set(flattenThreads(sourceGroups.value).map((thread) => thread.id)),
+        new Set(flatSourceThreads.map((thread) => thread.id)),
       )
       applyThreadFlags()
       hasLoadedThreads.value = true
@@ -4830,6 +4902,7 @@ export function useDesktopState() {
     removeProject,
     reorderProject,
     pinProjectToTop,
+    markAllThreadsAsRead,
     compactSelectedThread,
     startPolling,
     stopPolling,

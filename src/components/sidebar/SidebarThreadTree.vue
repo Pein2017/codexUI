@@ -19,7 +19,13 @@
           >
             <template #left>
               <span class="thread-left-stack">
-                <span v-if="shouldShowThreadIndicator(thread)" class="thread-status-indicator" :data-state="getThreadState(thread)" />
+                <span
+                  v-if="shouldShowThreadIndicator(thread)"
+                  class="thread-status-indicator"
+                  :data-state="getThreadState(thread)"
+                  :title="threadIndicatorLabel(thread)"
+                  :aria-label="threadIndicatorLabel(thread)"
+                />
                 <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
                   <IconTablerPin class="thread-icon" />
                 </button>
@@ -95,6 +101,15 @@
               <span>Chronological list</span>
               <span v-if="threadViewMode === 'chronological'">✓</span>
             </button>
+            <button
+              v-if="unreadThreadCount > 0"
+              class="organize-menu-item"
+              type="button"
+              @click="onMarkAllSeen"
+            >
+              <span>Mark all seen</span>
+              <span>{{ unreadThreadCount }}</span>
+            </button>
           </div>
         </div>
       </template>
@@ -126,6 +141,8 @@
                 v-if="shouldShowThreadIndicator(thread)"
                 class="thread-status-indicator"
                 :data-state="getThreadState(thread)"
+                :title="threadIndicatorLabel(thread)"
+                :aria-label="threadIndicatorLabel(thread)"
               />
               <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
                 <IconTablerPin class="thread-icon" />
@@ -279,11 +296,13 @@
               >
                 <template #left>
                   <span class="thread-left-stack">
-                    <span
-                      v-if="shouldShowThreadIndicator(thread)"
-                      class="thread-status-indicator"
-                      :data-state="getThreadState(thread)"
-                    />
+                      <span
+                        v-if="shouldShowThreadIndicator(thread)"
+                        class="thread-status-indicator"
+                        :data-state="getThreadState(thread)"
+                        :title="threadIndicatorLabel(thread)"
+                        :aria-label="threadIndicatorLabel(thread)"
+                      />
                     <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
                       <IconTablerPin class="thread-icon" />
                     </button>
@@ -441,6 +460,7 @@ const emit = defineEmits<{
   'reorder-project': [payload: { projectName: string; toIndex: number }]
   'export-thread': [threadId: string]
   'fork-thread': [threadId: string]
+  'mark-all-seen': []
 }>()
 
 type PendingProjectDrag = {
@@ -658,6 +678,12 @@ const pinnedThreads = computed(() =>
     .filter(threadMatchesSearch),
 )
 
+const unreadThreadCount = computed(() =>
+  props.groups.reduce((count, group) => (
+    count + group.threads.reduce((groupCount, thread) => groupCount + (thread.unread ? 1 : 0), 0)
+  ), 0),
+)
+
 const projectedDropProjectIndex = computed<number | null>(() => {
   const drag = activeProjectDrag.value
   if (!drag || drag.dropTargetIndexFull === null || props.groups.length === 0) return null
@@ -749,6 +775,11 @@ function togglePin(threadId: string): void {
 
 function onSelect(threadId: string): void {
   emit('select', threadId)
+}
+
+function onMarkAllSeen(): void {
+  emit('mark-all-seen')
+  isOrganizeMenuOpen.value = false
 }
 
 function onExportThread(threadId: string): void {
@@ -1487,19 +1518,23 @@ function hasThreads(group: UiProjectGroup): boolean {
 }
 
 function shouldShowThreadIndicator(thread: UiThread): boolean {
-  return Boolean(thread.pendingRequestState) || thread.inProgress || thread.unread
+  return thread.inProgress || thread.unread
 }
 
 function threadRequestLabel(thread: UiThread): string {
   return thread.pendingRequestState === 'approval' ? 'Ожидает одобрения' : 'Ожидает ответа'
 }
 
-function getThreadState(thread: UiThread): 'awaiting-approval' | 'awaiting-response' | 'working' | 'unread' | 'idle' {
-  if (thread.pendingRequestState === 'approval') return 'awaiting-approval'
-  if (thread.pendingRequestState === 'response') return 'awaiting-response'
+function getThreadState(thread: UiThread): 'working' | 'unread' | 'idle' {
   if (thread.inProgress) return 'working'
   if (thread.unread) return 'unread'
   return 'idle'
+}
+
+function threadIndicatorLabel(thread: UiThread): string {
+  if (thread.inProgress) return 'Running'
+  if (thread.unread) return 'New since opened'
+  return ''
 }
 
 watch(

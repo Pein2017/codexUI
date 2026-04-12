@@ -254,7 +254,7 @@
             :selected-prefix-icon="showFastModeModelIcon ? IconTablerBolt : null"
             placeholder="Model"
             open-direction="up"
-            :disabled="disabled || !activeThreadId || models.length === 0 || isTurnInProgress"
+            :disabled="disabled || !activeThreadId || models.length === 0"
             @update:model-value="onModelSelect"
           />
 
@@ -264,7 +264,7 @@
             :options="reasoningOptions"
             placeholder="Thinking"
             open-direction="up"
-            :disabled="disabled || !activeThreadId || isTurnInProgress"
+            :disabled="disabled || !activeThreadId"
             @update:model-value="onReasoningEffortSelect"
           />
 
