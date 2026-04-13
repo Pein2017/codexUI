@@ -1,16 +1,21 @@
 <template>
-  <form class="thread-composer" @submit.prevent="onSubmit(isTurnInProgress ? activeInProgressMode : 'steer')">
+  <form
+    class="thread-composer"
+    :class="{ 'thread-composer--inline-edit': isInlineEdit }"
+    @submit.prevent="onSubmit(submitModeForCurrentState)"
+  >
     <p v-if="dictationErrorText" class="thread-composer-dictation-error">
       {{ dictationErrorText }}
     </p>
 
-    <div
-      class="thread-composer-shell"
-      :class="{
-        'thread-composer-shell--no-top-radius': hasQueueAbove,
-        'thread-composer-shell--drag-active': isDragActive,
-      }"
-    >
+      <div
+        class="thread-composer-shell"
+        :class="{
+          'thread-composer-shell--no-top-radius': hasQueueAbove,
+          'thread-composer-shell--drag-active': isDragActive,
+          'thread-composer-shell--inline-edit': isInlineEdit,
+        }"
+      >
       <div v-if="selectedImages.length > 0" class="thread-composer-attachments">
         <div v-for="image in selectedImages" :key="image.id" class="thread-composer-attachment">
           <img class="thread-composer-attachment-image" :src="image.url" :alt="image.name || 'Selected image'" />
@@ -116,6 +121,7 @@
           ref="inputRef"
           v-model="draft"
           class="thread-composer-input"
+          :class="{ 'thread-composer-input--inline-edit': isInlineEdit }"
           :placeholder="placeholderText"
           :disabled="isInteractionDisabled"
           @input="onInputChange"
@@ -138,7 +144,10 @@
 
       <div
         class="thread-composer-controls"
-        :class="{ 'thread-composer-controls--recording': isDictationRecording }"
+        :class="{
+          'thread-composer-controls--recording': isDictationRecording,
+          'thread-composer-controls--inline-edit': isInlineEdit,
+        }"
       >
         <div v-if="!isDictationRecording" class="thread-composer-primary-controls">
           <div ref="attachMenuRootRef" class="thread-composer-attach">
@@ -177,76 +186,79 @@
               >
                 Take photo
               </button>
-              <div class="thread-composer-attach-separator" />
-              <div class="thread-composer-attach-mode">
-                <span class="thread-composer-attach-mode-label">In-progress send</span>
-                <div class="thread-composer-attach-mode-buttons">
-                  <button
-                    class="thread-composer-attach-mode-button"
-                    :class="{ 'is-active': activeInProgressMode === 'steer' }"
-                    type="button"
-                    :disabled="isInteractionDisabled"
-                    @click="setActiveInProgressMode('steer')"
-                  >
-                    Steer
-                  </button>
-                  <button
-                    class="thread-composer-attach-mode-button"
-                    :class="{ 'is-active': activeInProgressMode === 'queue' }"
-                    type="button"
-                    :disabled="isInteractionDisabled"
-                    @click="setActiveInProgressMode('queue')"
-                  >
-                    Queue
-                  </button>
+              <template v-if="!isInlineEdit">
+                <div class="thread-composer-attach-separator" />
+                <div class="thread-composer-attach-mode">
+                  <span class="thread-composer-attach-mode-label">In-progress send</span>
+                  <div class="thread-composer-attach-mode-buttons">
+                    <button
+                      class="thread-composer-attach-mode-button"
+                      :class="{ 'is-active': activeInProgressMode === 'steer' }"
+                      type="button"
+                      :disabled="isInteractionDisabled"
+                      @click="setActiveInProgressMode('steer')"
+                    >
+                      Steer
+                    </button>
+                    <button
+                      class="thread-composer-attach-mode-button"
+                      :class="{ 'is-active': activeInProgressMode === 'queue' }"
+                      type="button"
+                      :disabled="isInteractionDisabled"
+                      @click="setActiveInProgressMode('queue')"
+                    >
+                      Queue
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div class="thread-composer-attach-separator" />
-              <button
-                v-if="isFastModeSupported"
-                class="thread-composer-attach-setting"
-                type="button"
-                role="switch"
-                :aria-checked="selectedSpeedMode === 'fast'"
-                :aria-label="`Fast mode ${selectedSpeedMode === 'fast' ? 'enabled' : 'disabled'}`"
-                :disabled="isSpeedToggleDisabled"
-                @click="onToggleSpeedMode"
-              >
-                <span class="thread-composer-attach-setting-copy">
-                  <span class="thread-composer-attach-setting-label">Fast mode</span>
-                  <span class="thread-composer-attach-setting-description">{{ speedModeDescription }}</span>
-                </span>
-                <span
-                  class="thread-composer-attach-switch"
-                  :class="{
-                    'is-on': selectedSpeedMode === 'fast',
-                    'is-busy': isUpdatingSpeedMode,
-                    'is-disabled': isSpeedToggleDisabled,
-                  }"
-                />
-              </button>
-              <button
-                class="thread-composer-attach-setting"
-                type="button"
-                role="switch"
-                :aria-checked="isPlanModeSelected"
-                :aria-label="isPlanModeSelected ? 'Disable plan mode' : 'Enable plan mode'"
-                :disabled="disabled || !activeThreadId || isTurnInProgress"
-                @click="toggleCollaborationMode"
-              >
-                <span class="thread-composer-attach-setting-copy">
-                  <span class="thread-composer-attach-setting-label">Plan mode</span>
-                  <span class="thread-composer-attach-setting-description">Agent proposes a plan before acting</span>
-                </span>
-                <span
-                  class="thread-composer-attach-switch"
-                  :class="{ 'is-on': isPlanModeSelected }"
-                />
-              </button>
+                <div class="thread-composer-attach-separator" />
+                <button
+                  v-if="isFastModeSupported"
+                  class="thread-composer-attach-setting"
+                  type="button"
+                  role="switch"
+                  :aria-checked="selectedSpeedMode === 'fast'"
+                  :aria-label="`Fast mode ${selectedSpeedMode === 'fast' ? 'enabled' : 'disabled'}`"
+                  :disabled="isSpeedToggleDisabled"
+                  @click="onToggleSpeedMode"
+                >
+                  <span class="thread-composer-attach-setting-copy">
+                    <span class="thread-composer-attach-setting-label">Fast mode</span>
+                    <span class="thread-composer-attach-setting-description">{{ speedModeDescription }}</span>
+                  </span>
+                  <span
+                    class="thread-composer-attach-switch"
+                    :class="{
+                      'is-on': selectedSpeedMode === 'fast',
+                      'is-busy': isUpdatingSpeedMode,
+                      'is-disabled': isSpeedToggleDisabled,
+                    }"
+                  />
+                </button>
+                <button
+                  class="thread-composer-attach-setting"
+                  type="button"
+                  role="switch"
+                  :aria-checked="isPlanModeSelected"
+                  :aria-label="isPlanModeSelected ? 'Disable plan mode' : 'Enable plan mode'"
+                  :disabled="disabled || !activeThreadId || isTurnInProgress"
+                  @click="toggleCollaborationMode"
+                >
+                  <span class="thread-composer-attach-setting-copy">
+                    <span class="thread-composer-attach-setting-label">Plan mode</span>
+                    <span class="thread-composer-attach-setting-description">Agent proposes a plan before acting</span>
+                  </span>
+                  <span
+                    class="thread-composer-attach-switch"
+                    :class="{ 'is-on': isPlanModeSelected }"
+                  />
+                </button>
+              </template>
             </div>
           </div>
 
           <ComposerDropdown
+            v-if="!isInlineEdit"
             ref="modelDropdownRef"
             class="thread-composer-control thread-composer-control--model"
             :model-value="selectedModel"
@@ -259,6 +271,7 @@
           />
 
           <ComposerDropdown
+            v-if="!isInlineEdit"
             class="thread-composer-control thread-composer-control--reasoning"
             :model-value="selectedReasoningEffort"
             :options="reasoningOptions"
@@ -269,10 +282,10 @@
           />
 
           <button
-            v-if="showCompactButton"
+            v-if="showCompactButton && !isInlineEdit"
             class="thread-composer-command-button"
             type="button"
-            :disabled="disabled || !activeThreadId || isTurnInProgress"
+            :disabled="disabled || !activeThreadId || isThreadBusyComputed"
             aria-label="Compact thread context"
             :title="compactButtonTitle"
             @click="emit('compact')"
@@ -281,7 +294,7 @@
           </button>
 
           <span
-            v-if="contextUsageSummaryText"
+            v-if="contextUsageSummaryText && !isInlineEdit"
             class="thread-composer-context-badge"
             :class="{
               'is-warning': contextUsageTone === 'warning',
@@ -306,7 +319,7 @@
           </span>
 
           <button
-            v-if="isDictationSupported"
+            v-if="isDictationSupported && !isInlineEdit"
             class="thread-composer-mic"
             :class="{
               'thread-composer-mic--active': dictationState === 'recording',
@@ -340,12 +353,12 @@
           <button
             v-else
             class="thread-composer-submit"
-            :class="{ 'thread-composer-submit--queue': isTurnInProgress && activeInProgressMode === 'queue' }"
+            :class="{ 'thread-composer-submit--queue': submitModeForCurrentState === 'queue' }"
             type="button"
-            :aria-label="isTurnInProgress && activeInProgressMode === 'queue' ? 'Queue message' : 'Send message'"
-            :title="isTurnInProgress ? `Send as ${activeInProgressMode}` : 'Send'"
+            :aria-label="submitButtonLabel"
+            :title="submitButtonTitle"
             :disabled="!canSubmit"
-            @click="onSubmit(isTurnInProgress ? activeInProgressMode : 'steer')"
+            @click="onSubmit(submitModeForCurrentState)"
           >
             <IconTablerArrowUp class="thread-composer-submit-icon" />
           </button>
@@ -441,11 +454,15 @@ const props = defineProps<{
   threadTokenUsage?: UiThreadTokenUsage | null
   codexQuota?: UiRateLimitSnapshot | null
   isTurnInProgress?: boolean
+  isThreadBusy?: boolean
+  busyPhase?: 'idle' | 'turn' | 'compacting'
   isInterruptingTurn?: boolean
   isUpdatingSpeedMode?: boolean
   disabled?: boolean
   hasQueueAbove?: boolean
   showCompact?: boolean
+  appearance?: 'default' | 'inline-edit'
+  persistDraft?: boolean
   sendWithEnter?: boolean
   inProgressSubmitMode?: 'steer' | 'queue'
   dictationClickToToggle?: boolean
@@ -473,6 +490,7 @@ export type SubmitPayload = {
 export type ThreadComposerExposed = {
   hydrateDraft: (payload: ComposerDraftPayload) => void
   hasUnsavedDraft: () => boolean
+  clearDraft: () => void
 }
 
 const emit = defineEmits<{
@@ -542,8 +560,7 @@ const {
     draft.value = draft.value ? `${draft.value}\n${text}` : text
     dictationFeedback.value = ''
     if (props.dictationAutoSend !== false) {
-      const mode = props.isTurnInProgress ? activeInProgressMode.value : 'steer'
-      onSubmit(mode)
+      onSubmit(submitModeForCurrentState.value)
       return
     }
     nextTick(() => inputRef.value?.focus())
@@ -696,6 +713,8 @@ const standaloneFileAttachments = computed(() => {
   return fileAttachments.value.filter((att) => !grouped.has(att.fsPath))
 })
 const isInteractionDisabled = computed(() => props.disabled || !props.activeThreadId)
+const shouldPersistDraft = computed(() => props.persistDraft !== false)
+const isInlineEdit = computed(() => props.appearance === 'inline-edit')
 const isFastModeSupported = computed(() => props.selectedModel.trim() === 'gpt-5.4')
 const showFastModeModelIcon = computed(() =>
   props.selectedSpeedMode === 'fast' && isFastModeSupported.value,
@@ -704,29 +723,49 @@ const isSpeedToggleDisabled = computed(() =>
   isInteractionDisabled.value || props.isUpdatingSpeedMode === true,
 )
 const showCompactButton = computed(() => props.showCompact === true)
+const isThreadBusyComputed = computed(() => props.isThreadBusy === true || props.isTurnInProgress === true)
 const hasSelectedThreadContext = computed(() =>
   showCompactButton.value && props.activeThreadId.trim().length > 0,
 )
 const canUseGlobalSlashControls = computed(() =>
-  !props.disabled && props.activeThreadId.trim().length > 0,
+  !props.disabled && props.activeThreadId.trim().length > 0 && !isInlineEdit.value,
 )
 const compactButtonTitle = computed(() =>
-  props.isTurnInProgress
-    ? 'Compact is unavailable while a turn is running'
-    : 'Summarize earlier messages to free context',
+  props.busyPhase === 'compacting'
+    ? 'Compacting is already in progress'
+    : isThreadBusyComputed.value
+      ? 'Compact is unavailable while this thread is busy'
+      : 'Summarize earlier messages to free context',
 )
 const speedModeDescription = computed(() => {
   if (props.isUpdatingSpeedMode) {
-    return 'Saving speed setting...'
+    return 'Applying speed mode for this turn...'
   }
   return props.selectedSpeedMode === 'fast'
-    ? 'About 1.5x faster, with credits used at 2x'
-    : 'Default speed with normal credit usage'
+    ? 'About 1.5x faster on the next turn, with credits used at 2x'
+    : 'Default speed on the next turn with normal credit usage'
 })
 const inProgressMode = computed<'steer' | 'queue'>(() =>
   props.inProgressSubmitMode === 'steer' ? 'steer' : 'queue',
 )
 const activeInProgressMode = ref<'steer' | 'queue'>(inProgressMode.value)
+const submitModeForCurrentState = computed<'steer' | 'queue'>(() => {
+  if (props.busyPhase === 'compacting') return 'queue'
+  if (props.isTurnInProgress) return activeInProgressMode.value
+  return 'steer'
+})
+const submitButtonLabel = computed(() =>
+  submitModeForCurrentState.value === 'queue' ? 'Queue message' : 'Send message',
+)
+const submitButtonTitle = computed(() => {
+  if (props.busyPhase === 'compacting') {
+    return 'Queue message to send right after compaction finishes'
+  }
+  if (props.isTurnInProgress) {
+    return `Send as ${activeInProgressMode.value}`
+  }
+  return 'Send'
+})
 const isDictationRecording = computed(() => dictationState.value === 'recording')
 const dictationButtonLabel = computed(() => {
   if (dictationState.value === 'recording') return 'Stop dictation'
@@ -1022,7 +1061,9 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
     mode,
   })
-  clearPersistedDraftForThread(props.activeThreadId)
+  if (shouldPersistDraft.value) {
+    clearPersistedDraftForThread(props.activeThreadId)
+  }
   clearDraftState()
   folderUploadGroups.value = []
   isAttachMenuOpen.value = false
@@ -1658,11 +1699,11 @@ function resolveKeyboardSubmitMode(event: KeyboardEvent): 'steer' | 'queue' | nu
     ? event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
     : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
   if (shouldSteer) {
-    return 'steer'
+    return props.busyPhase === 'compacting' ? 'queue' : 'steer'
   }
   const shouldQueue =
     props.sendWithEnter !== false
-    && props.isTurnInProgress === true
+    && (props.isTurnInProgress === true || props.busyPhase === 'compacting')
     && event.key === 'Tab'
     && !event.shiftKey
     && !event.metaKey
@@ -1878,7 +1919,7 @@ function parseSlashCommand(raw: string): string | null {
 }
 
 function clearSlashDraftState(): void {
-  if (props.activeThreadId) {
+  if (props.activeThreadId && shouldPersistDraft.value) {
     clearPersistedDraftForThread(props.activeThreadId)
   }
   draft.value = ''
@@ -1888,7 +1929,7 @@ function clearSlashDraftState(): void {
 
 function executeSlashCommand(command: string): boolean {
   if (command === 'compact') {
-    if (!showCompactButton.value || props.isTurnInProgress || props.disabled || !props.activeThreadId) return false
+    if (!showCompactButton.value || isThreadBusyComputed.value || props.disabled || !props.activeThreadId) return false
     clearSlashDraftState()
     emit('compact')
     nextTick(() => inputRef.value?.focus())
@@ -1949,6 +1990,7 @@ function executeSlashCommand(command: string): boolean {
 }
 
 function tryExecuteSlashCommand(): boolean {
+  if (isInlineEdit.value) return false
   const command = parseSlashCommand(draft.value)
   if (!command) return false
   return executeSlashCommand(command)
@@ -1973,6 +2015,7 @@ onMounted(() => {
 defineExpose<ThreadComposerExposed>({
   hydrateDraft,
   hasUnsavedDraft: () => hasUnsavedDraft.value,
+  clearDraft: clearDraftState,
 })
 
 onBeforeUnmount(() => {
@@ -1992,14 +2035,16 @@ watch(
   () => props.activeThreadId,
   (nextThreadId) => {
     cancelDictation()
-    if (lastActiveThreadId) {
+    if (lastActiveThreadId && shouldPersistDraft.value) {
       persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
     }
     clearDraftState()
-    const restored = loadPersistedDraftForThread(nextThreadId)
-    if (restored) {
-      replaceDraftState(restored)
-      onInputChange()
+    if (shouldPersistDraft.value) {
+      const restored = loadPersistedDraftForThread(nextThreadId)
+      if (restored) {
+        replaceDraftState(restored)
+        onInputChange()
+      }
     }
     lastActiveThreadId = nextThreadId.trim()
   },
@@ -2007,7 +2052,7 @@ watch(
 )
 
 watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
-  if (!lastActiveThreadId) return
+  if (!lastActiveThreadId || !shouldPersistDraft.value) return
   persistDraftForThread(lastActiveThreadId, getCurrentDraftPayload())
 }, { deep: true })
 
@@ -2037,8 +2082,16 @@ watch(
   @apply w-full max-w-[min(var(--chat-column-max,72rem),100%)] mx-auto;
 }
 
+.thread-composer--inline-edit {
+  @apply max-w-[min(46rem,100%)];
+}
+
 .thread-composer-shell {
   @apply relative rounded-2xl border border-zinc-300 bg-white p-2 sm:p-3 shadow-sm;
+}
+
+.thread-composer-shell--inline-edit {
+  @apply rounded-xl border-amber-200 bg-amber-50/40 px-2.5 py-2 shadow-none;
 }
 
 .thread-composer-shell--drag-active {
@@ -2248,6 +2301,10 @@ watch(
   @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
 }
 
+.thread-composer-input--inline-edit {
+  @apply min-h-8 max-h-28 px-0 py-1.5 text-[13px] leading-5;
+}
+
 .thread-composer-input:focus {
   @apply ring-0;
 }
@@ -2258,6 +2315,10 @@ watch(
 
 .thread-composer-controls {
   @apply relative mt-2 sm:mt-3 flex items-center gap-2 sm:gap-4 overflow-visible;
+}
+
+.thread-composer-controls--inline-edit {
+  @apply mt-1.5 gap-2;
 }
 
 .thread-composer-controls--recording {

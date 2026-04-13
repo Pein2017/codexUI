@@ -1901,6 +1901,7 @@ const failedMarkdownImageKeys = ref<Set<string>>(new Set())
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 let highlightJsLoader: Promise<void> | null = null
 const liveOverlayClockNow = ref(Date.now())
+type ScrollRestoreMode = 'restore-saved-position' | 'preserve-detached-viewport'
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -4151,17 +4152,23 @@ function isAtBottom(container: HTMLElement): boolean {
   return distance <= BOTTOM_THRESHOLD_PX
 }
 
-function emitScrollState(container: HTMLElement): void {
-  if (!props.activeThreadId) return
+function buildScrollState(container: HTMLElement): ThreadScrollState {
   const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0)
   const scrollRatio = maxScrollTop > 0 ? Math.min(Math.max(container.scrollTop / maxScrollTop, 0), 1) : 1
+  return {
+    scrollTop: container.scrollTop,
+    isAtBottom: isAtBottom(container),
+    scrollRatio,
+  }
+}
+
+function emitScrollState(container: HTMLElement): void {
+  if (!props.activeThreadId) return
+  const nextState = buildScrollState(container)
+  localScrollState.value = nextState
   emit('updateScrollState', {
     threadId: props.activeThreadId,
-    state: {
-      scrollTop: container.scrollTop,
-      isAtBottom: isAtBottom(container),
-      scrollRatio,
-    },
+    state: nextState,
   })
 }
 
@@ -4174,7 +4181,7 @@ function applySavedScrollState(): void {
     return
   }
 
-  const savedState = props.scrollState
+  const savedState = localScrollState.value ?? props.scrollState
   if (!savedState || savedState.isAtBottom) {
     emitScrollState(container)
     return
@@ -4182,10 +4189,15 @@ function applySavedScrollState(): void {
 
   const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0)
   const targetScrollTop =
-    typeof savedState.scrollRatio === 'number'
-      ? savedState.scrollRatio * maxScrollTop
-      : savedState.scrollTop
-  container.scrollTop = Math.min(Math.max(targetScrollTop, 0), maxScrollTop)
+    typeof savedState.scrollTop === 'number' && Number.isFinite(savedState.scrollTop)
+      ? savedState.scrollTop
+      : typeof savedState.scrollRatio === 'number'
+        ? savedState.scrollRatio * maxScrollTop
+        : container.scrollTop
+  const normalizedScrollTop = Math.min(Math.max(targetScrollTop, 0), maxScrollTop)
+  if (Math.abs(container.scrollTop - normalizedScrollTop) > 1) {
+    container.scrollTop = normalizedScrollTop
+  }
   emitScrollState(container)
 }
 
@@ -4254,13 +4266,16 @@ function bindPendingImageHandlers(): void {
   }
 }
 
-async function scheduleScrollRestore(): Promise<void> {
+async function scheduleScrollRestore(mode: ScrollRestoreMode = 'restore-saved-position'): Promise<void> {
   await nextTick()
   if (scrollRestoreFrame) {
     cancelAnimationFrame(scrollRestoreFrame)
   }
   scrollRestoreFrame = requestAnimationFrame(() => {
     scrollRestoreFrame = 0
+    if (mode === 'preserve-detached-viewport' && !autoFollowOutput.value) {
+      return
+    }
     applySavedScrollState()
     bindPendingImageHandlers()
     scheduleBottomLock()
@@ -4295,8 +4310,7 @@ watch(
       ]),
     )
 
-
-    await scheduleScrollRestore()
+    await scheduleScrollRestore(autoFollowOutput.value ? 'restore-saved-position' : 'preserve-detached-viewport')
   },
 )
 
@@ -4324,7 +4338,7 @@ watch(
   () => props.pendingRequests,
   async () => {
     if (props.isLoading) return
-    await scheduleScrollRestore()
+    await scheduleScrollRestore(autoFollowOutput.value ? 'restore-saved-position' : 'preserve-detached-viewport')
   },
   { deep: true },
 )
@@ -4335,10 +4349,6 @@ watch(
     if (!overlay) return
     await nextTick()
     if (!shouldLockToBottom()) {
-      const container = conversationListRef.value
-      if (container) {
-        emitScrollState(container)
-      }
       return
     }
     enforceBottomState()
@@ -4446,6 +4456,8 @@ onBeforeUnmount(() => {
 
 .conversation-list {
   @apply h-full min-h-0 list-none m-0 px-2 sm:px-6 py-0 overflow-y-auto overflow-x-visible flex flex-col gap-2 sm:gap-3;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
 }
 
 @media (max-width: 639px) {

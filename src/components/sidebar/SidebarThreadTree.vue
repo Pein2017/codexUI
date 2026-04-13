@@ -1,6 +1,7 @@
 <template>
   <section class="thread-tree-root">
     <section v-if="pinnedThreads.length > 0" class="pinned-section">
+      <p class="pinned-section-label">Pinned</p>
       <ul class="thread-list">
         <li
           v-for="thread in pinnedThreads"
@@ -12,6 +13,7 @@
             class="thread-row"
             :data-active="thread.id === selectedThreadId"
             :data-pinned="isPinned(thread.id)"
+            :data-state="getThreadState(thread)"
             :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
             :force-right-hover="isThreadMenuOpen(thread.id)"
             @mouseleave="onThreadRowLeave(thread.id, $event)"
@@ -26,9 +28,6 @@
                   :title="threadIndicatorLabel(thread)"
                   :aria-label="threadIndicatorLabel(thread)"
                 />
-                <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
-                  <IconTablerPin class="thread-icon" />
-                </button>
               </span>
             </template>
             <button class="thread-main-button" type="button" @click="onSelect(thread.id)">
@@ -131,6 +130,7 @@
         <span class="thread-status-filter-count">{{ statusFilterCounts.running }}</span>
       </button>
       <button
+        v-if="statusFilterCounts.new > 0 || threadStatusFilter === 'new'"
         class="thread-status-filter-button"
         type="button"
         :data-active="threadStatusFilter === 'new' ? 'true' : 'false'"
@@ -173,6 +173,7 @@
           class="thread-row"
           :data-active="thread.id === selectedThreadId"
           :data-pinned="isPinned(thread.id)"
+          :data-state="getThreadState(thread)"
           :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
           :force-right-hover="isThreadMenuOpen(thread.id)"
           @mouseleave="onThreadRowLeave(thread.id, $event)"
@@ -187,9 +188,6 @@
                 :title="threadIndicatorLabel(thread)"
                 :aria-label="threadIndicatorLabel(thread)"
               />
-              <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
-                <IconTablerPin class="thread-icon" />
-              </button>
             </span>
           </template>
           <button class="thread-main-button" type="button" @click="onSelect(thread.id)">
@@ -332,6 +330,7 @@
                 class="thread-row"
                 :data-active="thread.id === selectedThreadId"
                 :data-pinned="isPinned(thread.id)"
+                :data-state="getThreadState(thread)"
                 :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
                 :force-right-hover="isThreadMenuOpen(thread.id)"
                 @mouseleave="onThreadRowLeave(thread.id, $event)"
@@ -346,9 +345,6 @@
                         :title="threadIndicatorLabel(thread)"
                         :aria-label="threadIndicatorLabel(thread)"
                       />
-                    <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
-                      <IconTablerPin class="thread-icon" />
-                    </button>
                   </span>
                 </template>
                 <button class="thread-main-button" type="button" @click="onSelect(thread.id)">
@@ -397,7 +393,7 @@
               <span class="thread-show-more-spacer" />
             </template>
             <button class="thread-show-more-button" type="button" @click="toggleProjectExpansion(group.projectName)">
-              {{ isExpanded(group.projectName) ? 'Show less' : 'Show more' }}
+              {{ showMoreLabel(group) }}
             </button>
           </SidebarMenuRow>
       </article>
@@ -420,6 +416,9 @@
         </button>
         <button class="thread-menu-item" type="button" @click="onForkThread(openThreadMenuThread.id)">
           Create chat fork
+        </button>
+        <button class="thread-menu-item" type="button" @click="togglePinFromMenu(openThreadMenuThread.id)">
+          {{ isPinned(openThreadMenuThread.id) ? 'Unpin thread' : 'Pin thread' }}
         </button>
         <button class="thread-menu-item" type="button" @click="openRenameThreadDialog(openThreadMenuThread.id, openThreadMenuThread.title)">
           Rename thread
@@ -480,7 +479,6 @@ import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
-import IconTablerPin from '../icons/IconTablerPin.vue'
 import SidebarMenuRow from './SidebarMenuRow.vue'
 
 const props = defineProps<{
@@ -666,12 +664,34 @@ function threadMatchesVisibleFilters(thread: UiThread): boolean {
   return threadMatchesSearch(thread) && threadMatchesStatusFilter(thread)
 }
 
+function threadSortPriority(thread: UiThread): number {
+  if (thread.inProgress) return 0
+  if (thread.unread) return 1
+  return 2
+}
+
+function threadSortTimestamp(thread: UiThread): number {
+  return new Date(thread.updatedAtIso || thread.createdAtIso).getTime()
+}
+
+function sortThreadsForDisplay(threads: UiThread[]): UiThread[] {
+  return [...threads].sort((first, second) => {
+    const priorityDiff = threadSortPriority(first) - threadSortPriority(second)
+    if (priorityDiff !== 0) return priorityDiff
+
+    const timestampDiff = threadSortTimestamp(second) - threadSortTimestamp(first)
+    if (timestampDiff !== 0) return timestampDiff
+
+    return first.title.localeCompare(second.title)
+  })
+}
+
 const searchFilteredGroups = computed<UiProjectGroup[]>(() => {
   if (!isSearchActive.value) return props.groups
   return props.groups
     .map((group) => ({
       ...group,
-      threads: group.threads.filter(threadMatchesSearch),
+      threads: sortThreadsForDisplay(group.threads.filter(threadMatchesSearch)),
     }))
     .filter((group) => group.threads.length > 0)
 })
@@ -695,7 +715,7 @@ const filteredGroups = computed<UiProjectGroup[]>(() => {
   return searchFilteredGroups.value
     .map((group) => ({
       ...group,
-      threads: group.threads.filter(threadMatchesStatusFilter),
+      threads: sortThreadsForDisplay(group.threads.filter(threadMatchesStatusFilter)),
     }))
     .filter((group) => group.threads.length > 0)
 })
@@ -713,11 +733,7 @@ const globalThreads = computed<UiThread[]>(() => {
     }
   }
 
-  return rows.sort((first, second) => {
-    const firstTimestamp = new Date(first.updatedAtIso || first.createdAtIso).getTime()
-    const secondTimestamp = new Date(second.updatedAtIso || second.createdAtIso).getTime()
-    return secondTimestamp - firstTimestamp
-  })
+  return sortThreadsForDisplay(rows)
 })
 
 const threadById = computed(() => {
@@ -743,7 +759,7 @@ const threadProjectNameById = computed(() => {
 const unpinnedThreadsByProjectName = computed(() => {
   const map = new Map<string, UiThread[]>()
   for (const group of filteredGroups.value) {
-    const rows = group.threads.filter((thread) => !pinnedThreadIdSet.value.has(thread.id))
+    const rows = sortThreadsForDisplay(group.threads.filter((thread) => !pinnedThreadIdSet.value.has(thread.id)))
     map.set(group.projectName, rows)
   }
   return map
@@ -902,6 +918,11 @@ function togglePin(threadId: string): void {
   }
 
   pinnedThreadIds.value = [threadId, ...pinnedThreadIds.value]
+}
+
+function togglePinFromMenu(threadId: string): void {
+  togglePin(threadId)
+  closeThreadMenu()
 }
 
 function onSelect(threadId: string): void {
@@ -1653,6 +1674,18 @@ function hasHiddenThreads(group: UiProjectGroup): boolean {
   return !isCollapsed(group.projectName) && projectThreads(group).length > 10
 }
 
+function hiddenThreadCount(group: UiProjectGroup): number {
+  if (isSearchActive.value || isCollapsed(group.projectName) || isExpanded(group.projectName)) return 0
+  return Math.max(0, projectThreads(group).length - 10)
+}
+
+function showMoreLabel(group: UiProjectGroup): string {
+  const hiddenCount = hiddenThreadCount(group)
+  if (isExpanded(group.projectName)) return 'Show less'
+  if (hiddenCount <= 0) return 'Show more'
+  return `Show ${hiddenCount} more`
+}
+
 function hasThreads(group: UiProjectGroup): boolean {
   return projectThreads(group).length > 0
 }
@@ -1744,6 +1777,10 @@ onBeforeUnmount(() => {
   @apply mb-1;
 }
 
+.pinned-section-label {
+  @apply px-3 pb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-zinc-400;
+}
+
 .thread-tree-header-row {
   @apply cursor-default;
 }
@@ -1757,11 +1794,11 @@ onBeforeUnmount(() => {
 }
 
 .thread-status-filter-button {
-  @apply inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-800;
+  @apply inline-flex items-center gap-1 rounded-full border border-zinc-200/90 bg-white/90 px-2.5 py-0.5 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-800;
 }
 
 .thread-status-filter-button[data-active='true'] {
-  @apply border-zinc-300 bg-zinc-200 text-zinc-900;
+  @apply border-zinc-300 bg-zinc-200 text-zinc-900 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.4)];
 }
 
 .thread-status-filter-count {
@@ -1769,7 +1806,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-status-filter-action {
-  @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800;
+  @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800;
 }
 
 .organize-menu-wrap {
@@ -1919,7 +1956,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-row {
-  @apply hover:bg-zinc-200;
+  @apply hover:bg-zinc-200/80;
 }
 
 .thread-row[data-menu-open='true'] {
@@ -1927,11 +1964,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-left-stack {
-  @apply relative w-4 h-4 flex items-center justify-center;
-}
-
-.thread-pin-button {
-  @apply absolute inset-0 w-4 h-4 rounded text-zinc-500 opacity-0 pointer-events-none transition flex items-center justify-center;
+  @apply w-4 h-4 flex items-center justify-center;
 }
 
 .thread-main-button {
@@ -1971,7 +2004,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-row-time {
-  @apply block text-sm font-normal text-zinc-500;
+  @apply block min-w-[2.25rem] text-right text-xs font-normal tabular-nums text-zinc-400;
 }
 
 .thread-menu-wrap {
@@ -2029,12 +2062,18 @@ onBeforeUnmount(() => {
 }
 
 .thread-row[data-active='true'] {
-  @apply bg-zinc-200;
+  @apply bg-zinc-200/95;
+  box-shadow: inset 2px 0 0 rgba(82, 82, 91, 0.9);
 }
 
-.thread-row:hover .thread-pin-button,
-.thread-row:focus-within .thread-pin-button {
-  @apply opacity-100 pointer-events-auto;
+.thread-row[data-active='true'] .thread-row-title {
+  @apply font-medium text-zinc-900;
+}
+
+.thread-row[data-state='working'] .thread-row-time,
+.thread-row[data-state='unread'] .thread-row-time,
+.thread-row[data-active='true'] .thread-row-time {
+  @apply text-zinc-500;
 }
 
 .thread-status-indicator[data-state='unread'] {

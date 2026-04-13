@@ -80,32 +80,134 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Close the settings panel.
 
+### Feature: Settings highlights 5h and weekly limits
+
+#### Prerequisites
+- App is running from this repository.
+- The current Codex account returns `account/rateLimits/read` data with at least one short window and one weekly window.
+
+#### Steps
+1. Open any thread.
+2. Open the left sidebar, then open `Settings`.
+3. Locate the `Limits` section between `Session` and `MCP`.
+4. Confirm the section shows `5h limit` and `Weekly limit` cards even before reading the detailed quota cards below.
+5. If the account has quota data, confirm each card shows a remaining percentage plus reset timing.
+6. If the account includes a plan type, confirm the plan appears as a small badge in the `Limits` header.
+
+#### Expected Results
+- `Settings` surfaces `5h limit` and `Weekly limit` as first-class information instead of burying them only inside the generic rate-limit cards.
+- The `5h limit` card shows a concise remaining percentage and near-term reset status.
+- The `Weekly limit` card shows a concise remaining percentage and weekly refresh time.
+- When quota data is still loading or unavailable, the section explains that state explicitly instead of rendering blank values.
+
+#### Rollback/Cleanup
+- Close the settings panel.
+
 ### Feature: Per-session model and thinking selections stay independent
 
 #### Prerequisites
 - App is running from this repository.
 - At least two existing threads are available, or one existing thread plus the ability to start a new thread.
-- The available runtime controls expose at least two distinct `Model` values and two distinct `Thinking` values.
+- The available runtime controls expose at least two distinct `Model` values, two distinct `Thinking` values, and the `Fast mode` toggle.
 
 #### Steps
 1. Open thread A.
-2. Change `Model` and `Thinking` to a distinctive pair for thread A, for example `Model A` plus `high`.
+2. Change `Model`, `Thinking`, and `Fast mode` to a distinctive combination for thread A, for example `Model A` plus `high` with `Fast mode` enabled.
 3. Switch to thread B.
-4. Change `Model` and `Thinking` to a different pair for thread B, for example `Model B` plus `minimal`.
+4. Change `Model`, `Thinking`, and `Fast mode` to a different combination for thread B, for example `Model B` plus `minimal` with `Fast mode` disabled.
 5. Switch back to thread A.
-6. Confirm thread A restores its original `Model` and `Thinking` selections instead of inheriting thread B's values.
-7. Switch again to thread B and confirm thread B still shows its own pair.
-8. From the home/new-thread screen, choose another `Model` and `Thinking` pair, send the first message, and confirm the newly created thread keeps that pair after navigation completes.
-9. If forking is available, fork one of the threads and confirm the fork starts with the source thread's `Model` and `Thinking` values.
+6. Confirm thread A restores its original `Model`, `Thinking`, and `Fast mode` selections instead of inheriting thread B's values.
+7. Switch again to thread B and confirm thread B still shows its own combination.
+8. From the home/new-thread screen, choose another `Model`, `Thinking`, and `Fast mode` combination, send the first message, and confirm the newly created thread keeps that runtime after navigation completes.
+9. If forking is available, fork one of the threads and confirm the fork starts with the source thread's `Model`, `Thinking`, and `Fast mode` values.
+10. While thread A is running, queue a follow-up message after changing `Model`, `Thinking`, and `Fast mode`, then let the queued turn send.
+11. Confirm the queued message uses the snapshotted runtime combination instead of whatever is currently selected when it finally sends.
 
 #### Expected Results
 - Changing runtime controls in one thread does not overwrite the selections shown in other threads.
-- Returning to a previously visited thread restores the `Model` and `Thinking` values last chosen for that thread.
-- A newly created thread inherits the runtime pair chosen before its first send and keeps it after the thread is created.
-- A forked thread inherits the source thread's runtime pair instead of the currently visible values from another thread.
+- Returning to a previously visited thread restores the `Model`, `Thinking`, and `Fast mode` values last chosen for that thread.
+- A newly created thread inherits the runtime combination chosen before its first send and keeps it after the thread is created.
+- A forked thread inherits the source thread's runtime combination instead of the currently visible values from another thread.
+- A queued message preserves the `Model`, `Thinking`, and `Fast mode` values chosen when it was queued.
 
 #### Rollback/Cleanup
 - Restore each tested thread to its preferred runtime selection if needed.
+
+### Feature: Editing a past message waits for explicit confirmation
+
+#### Prerequisites
+- App is running from this repository.
+- An existing thread contains at least two completed user turns so rollback would visibly remove later context.
+
+#### Steps
+1. Open the thread and locate an older user message with an `Edit` action.
+2. Type a different draft into the main composer and leave it there unsent.
+3. Click `Edit` on that older message.
+4. Confirm a separate, smaller edit composer appears above the main composer instead of replacing the main draft.
+5. Confirm the conversation history does not change yet: later assistant replies and later turns should still remain visible.
+6. Modify the temporary edit draft, then click the edit-panel `Cancel` action.
+7. Confirm the edit panel disappears, the temporary edit draft is discarded, and the main composer still contains the draft text typed in step 2.
+8. Click `Edit` on the same earlier message again.
+9. Change the edit draft text and click the edit panel send button to confirm the edit.
+10. Confirm rollback happens only now: the original turn and all later turns are removed, and the edited message is sent as the new latest user turn.
+11. If the thread is still open, repeat once more and verify that manually clicking a rollback action clears the pending edit panel instead of leaving a stale edit state behind.
+
+#### Expected Results
+- Clicking `Edit` on a historical message only opens a temporary edit draft and does not immediately rollback the thread.
+- The main composer draft remains intact while the temporary edit panel is open.
+- Cancelling the edit discards only the temporary edit draft and leaves the thread completely unchanged.
+- Rollback happens only when the user explicitly confirms by sending the edited message from the edit panel.
+- Pending edit state is cleared if the user cancels or performs a manual rollback.
+
+#### Rollback/Cleanup
+- If needed, resend the intended final prompt so the thread ends in the desired state after testing.
+
+### Feature: Compacting keeps thread running and auto-queues follow-up messages
+
+#### Prerequisites
+- App is running from this repository.
+- An existing thread has enough history for the `Compact` action to be available.
+
+#### Steps
+1. Open a thread with the normal composer visible and ensure no turn is currently running.
+2. Click `Compact`.
+3. Confirm the thread immediately enters a running state in the sidebar and content area, with the activity label showing `Compacting context`.
+4. While compaction is still in progress, type a follow-up message in the main composer and press the normal send shortcut/button.
+5. Confirm that the message is added to the queued messages list instead of trying to interrupt or immediately start a new turn.
+6. Wait for compaction to finish.
+7. Confirm the queued follow-up automatically starts sending without requiring another click.
+
+#### Expected Results
+- Compacting is treated as an active running state for the thread list and thread activity UI.
+- Submitting during compaction automatically queues the message, even if the normal in-progress mode is set to `Steer`.
+- Once compaction finishes successfully, the oldest queued follow-up begins automatically.
+
+#### Rollback/Cleanup
+- If needed, delete the queued follow-up before compaction completes, or let the follow-up finish so the thread ends in the intended state.
+
+### Feature: Completed turns do not leave stale live chunks behind
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can produce a streamed assistant response long enough to observe partial markdown sections such as headings or lists while it is still generating.
+
+#### Steps
+1. Open a thread and send a prompt likely to produce a long, structured response.
+2. While the assistant is still streaming, observe partial live content in the conversation area, especially if it contains markdown sections such as `Status`, headings, or lists.
+3. Wait for the turn to fully complete without refreshing the page.
+4. Confirm the final conversation settles to the persisted assistant response plus the normal `Worked ...` summary, without any extra partial assistant chunk remaining below or above it.
+5. Repeat once more with a response long enough that a partial heading or list is visible mid-stream.
+6. Confirm that when the turn completes, any temporary partial chunk disappears on its own and does not require a page refresh to clear.
+7. Refresh the page anyway and confirm the conversation rendering stays the same before and after the refresh.
+
+#### Expected Results
+- Partial `agentMessage.live` content is visible only while the turn is still streaming.
+- After completion, stale live chunks do not remain pinned in the conversation.
+- Structured markdown fragments such as `Status` headings or partial bullet lists do not stay behind as broken layout blocks.
+- Refreshing the page does not change the final rendering because the stale live state has already been cleared in-place.
+
+#### Rollback/Cleanup
+- No cleanup is required beyond finishing or interrupting the test turn.
 
 ### Feature: Thread list status reflects only this web session
 
@@ -150,6 +252,33 @@ This file tracks manual regression and feature verification steps.
 
 #### Rollback/Cleanup
 - Wait for any test prompt to finish or interrupt it if it should not keep running.
+
+### Feature: Sidebar rows prioritize active work without overlapping icons
+
+#### Prerequisites
+- App is running from this repository.
+- At least one thread can be made `running`, one thread can remain `new`, and one project contains more than ten visible threads.
+
+#### Steps
+1. Start a thread so it shows the running spinner in the sidebar.
+2. Inspect the left edge of that row and confirm only the spinner appears there.
+3. Open the thread overflow menu and choose `Pin thread`.
+4. Confirm the thread moves into the `Pinned` section and still shows a clean spinner without any overlapping pin affordance.
+5. Open the same thread menu again and choose `Unpin thread`.
+6. Confirm the thread returns to its project list and the menu remains the only place to pin or unpin it.
+7. In project view, confirm each project orders non-pinned threads as `running` first, then `new`, then other history by recency.
+8. Switch to chronological view and confirm the same priority ordering still applies across projects.
+9. When the `New` count is zero, confirm the `New` filter pill is hidden unless the current filter is already `New`.
+10. In a project with hidden rows, confirm the footer reads `Show N more` instead of a generic `Show more`.
+
+#### Expected Results
+- Running and unread indicators never share the same visual slot with a pin icon.
+- Pinning still works, but only through the thread menu.
+- Sidebar ordering surfaces active and unread work before passive history in both list modes.
+- The status filter row feels lighter, and the `Show N more` footer reads as project-local context instead of a generic global button.
+
+#### Rollback/Cleanup
+- Unpin any test thread if it should not remain in the `Pinned` section.
 
 ### Feature: Zoomed desktop sidebar stays in desktop mode
 
@@ -612,11 +741,15 @@ This file tracks manual regression and feature verification steps.
 2. Send a new message that produces a streaming assistant response.
 3. During streaming, do not scroll and observe viewport position.
 4. After streaming completes, verify the viewport remains at the same manual position.
+5. Repeat the scenario, but this time actively use the mouse wheel or trackpad to continue browsing older content while the response streams.
+6. Watch the conversation scrollbar and the browser-level right-hand scrollbar during the stream.
 
 #### Expected Results
 - Streaming updates do not force auto-scroll to the bottom when user has manually scrolled away.
 - User can continue reading older history while the response streams.
 - If the thread is already at the bottom when streaming starts, the latest streaming overlay remains visible.
+- While manually scrolling during streaming, the viewport does not get nudged downward in small increments.
+- The conversation scrollbar thumb remains visually steady instead of oscillating on each streamed delta.
 
 #### Rollback/Cleanup
 - Revert the scroll-preservation change in `src/components/content/ThreadConversation.vue` if manual scroll locking needs to be removed.
@@ -795,6 +928,32 @@ This file tracks manual regression and feature verification steps.
 - Changed-files panel is hidden while a turn is still in progress.
 - Panels remain available after refresh/restart because lookup is turnId/message-hash based.
 - File diff expansion still lazy-loads and displays content.
+
+#### Rollback/Cleanup
+- No cleanup required.
+
+### Feature: Review pane can inspect linked worktree changes
+
+#### Prerequisites
+- App server running from this repository.
+- A Git repository with at least one linked worktree, for example `/data/CoordExp/.worktrees/bbox-format-rewrite`.
+- The active thread is opened from the main repository workspace, not the linked worktree itself.
+- The linked worktree contains at least one uncommitted file change.
+
+#### Steps
+1. Open the thread whose `cwd` points at the main repository workspace.
+2. Click `Review`.
+3. In the `Target` selector, choose the linked worktree.
+4. Confirm the file list refreshes and shows the linked worktree's changed files.
+5. Switch between `Unstaged` and `Staged` while that linked worktree target remains selected.
+6. Switch back to the current thread workspace and confirm its own diff returns.
+
+#### Expected Results
+- `Review` lists linked worktrees from the same Git repository as selectable targets.
+- Selecting a linked worktree shows that worktree's diff without requiring a separate thread.
+- While viewing a non-thread worktree, `Review` stays read-only:
+  `Run review`, `Stage`, `Unstage`, and `Revert` actions are not offered.
+- Switching back to the current thread workspace restores the normal mutable review controls.
 
 #### Rollback/Cleanup
 - No cleanup required.

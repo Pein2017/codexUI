@@ -34,6 +34,7 @@ type QueuedMessageRow = {
   fileAttachments?: Array<{ label: string; path: string; fsPath: string }>
   modelId?: string
   reasoningEffort?: string
+  speedMode?: 'standard' | 'fast'
 }
 
 defineProps<{
@@ -78,8 +79,15 @@ function formatReasoningLabel(reasoningEffort: string): string {
 function getRuntimeSummary(message: QueuedMessageRow): string {
   const modelId = message.modelId?.trim() ?? ''
   const reasoningEffort = message.reasoningEffort?.trim() ?? ''
-  if (!modelId && !reasoningEffort) return ''
-  return `${formatModelLabel(modelId)} · ${formatReasoningLabel(reasoningEffort)}`
+  const speedMode = message.speedMode === 'fast' ? 'Fast' : message.speedMode === 'standard' ? 'Standard' : ''
+  if (!modelId && !reasoningEffort && !speedMode) return ''
+  const parts = [
+    modelId ? formatModelLabel(modelId) : '',
+    reasoningEffort ? formatReasoningLabel(reasoningEffort) : '',
+    speedMode,
+  ].filter(Boolean)
+  if (parts.length === 0) return ''
+  return parts.join(' · ')
 }
 </script>
 

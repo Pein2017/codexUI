@@ -175,6 +175,29 @@
                   </div>
                 </div>
               </div>
+              <div class="sidebar-settings-section">
+                <div class="sidebar-settings-section-header">
+                  <span class="sidebar-settings-section-title">Limits</span>
+                  <span v-if="settingsQuotaPlanText" class="sidebar-settings-chip">
+                    {{ settingsQuotaPlanText }}
+                  </span>
+                </div>
+                <div class="sidebar-settings-kv-grid">
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">5h limit</span>
+                    <span class="sidebar-settings-kv-value">{{ settingsFiveHourLimitText }}</span>
+                    <span class="sidebar-settings-kv-meta">{{ settingsFiveHourResetText }}</span>
+                  </div>
+                  <div class="sidebar-settings-kv-item">
+                    <span class="sidebar-settings-kv-label">Weekly limit</span>
+                    <span class="sidebar-settings-kv-value">{{ settingsWeeklyLimitText }}</span>
+                    <span class="sidebar-settings-kv-meta">{{ settingsWeeklyResetText }}</span>
+                  </div>
+                </div>
+                <p class="sidebar-settings-section-copy">
+                  {{ settingsQuotaStatusText }}
+                </p>
+              </div>
               <div
                 class="sidebar-settings-section"
                 :class="{ 'is-highlighted': activeSettingsSection === 'mcp' }"
@@ -492,6 +515,51 @@
                 </div>
 
                 <div class="composer-with-queue">
+                  <div
+                    v-if="activePastMessageEdit"
+                    class="composer-edit-panel"
+                  >
+                    <div class="composer-edit-panel-header">
+                      <div class="composer-edit-panel-copy">
+                        <span class="composer-edit-panel-label">Editing earlier message</span>
+                        <span class="composer-edit-panel-text">
+                          {{ isSelectedThreadBusy
+                            ? 'You can prepare this edit now. Rollback and resend stay disabled until the current thread activity finishes.'
+                            : 'Rollback happens only when you explicitly send this edit. Your main draft below stays untouched.' }}
+                        </span>
+                      </div>
+                      <button class="composer-edit-panel-action" type="button" @click="cancelPastMessageEdit">
+                        Cancel
+                      </button>
+                    </div>
+                    <ThreadComposer
+                      ref="pastEditComposerRef"
+                      appearance="inline-edit"
+                      :persist-draft="false"
+                      :active-thread-id="composerThreadContextId"
+                      :cwd="composerCwd"
+                      :collaboration-modes="availableCollaborationModes"
+                      :selected-collaboration-mode="selectedCollaborationMode"
+                      :models="availableModelIds"
+                      :selected-model="selectedModelId"
+                      :selected-reasoning-effort="selectedReasoningEffort"
+                      :selected-speed-mode="selectedSpeedMode"
+                      :is-updating-speed-mode="isUpdatingSpeedMode"
+                      :skills="installedSkills"
+                      :show-compact="false"
+                      :is-turn-in-progress="false"
+                      :send-with-enter="sendWithEnter"
+                      :in-progress-submit-mode="inProgressSendMode"
+                      :dictation-click-to-toggle="dictationClickToToggle"
+                      :dictation-auto-send="dictationAutoSend"
+                      :dictation-language="dictationLanguage"
+                      @submit="onSubmitPastEditMessage"
+                      @update:selected-collaboration-mode="onSelectCollaborationMode"
+                      @update:selected-model="onSelectModel"
+                      @update:selected-reasoning-effort="onSelectReasoningEffort"
+                      @update:selected-speed-mode="onSelectSpeedMode"
+                    />
+                  </div>
                   <QueuedMessages
                     :messages="selectedThreadQueuedMessages"
                     @edit="onEditQueuedMessage"
@@ -518,7 +586,8 @@
                     :thread-token-usage="selectedThreadTokenUsage"
                     :codex-quota="codexQuota"
                     :show-compact="true"
-                    :is-turn-in-progress="isSelectedThreadInProgress" :is-interrupting-turn="isInterruptingTurn"
+                    :is-turn-in-progress="isSelectedThreadInProgress" :is-thread-busy="isSelectedThreadBusy"
+                    :busy-phase="selectedThreadBusyPhase" :is-interrupting-turn="isInterruptingTurn"
                     :has-queue-above="selectedThreadQueuedMessages.length > 0"
                     :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
@@ -571,7 +640,16 @@ import {
   reloadMcpServerConfig,
   searchThreads,
 } from './api/codexGateway'
-import type { ReasoningEffort, SpeedMode, ThreadScrollState, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
+import type {
+  ReasoningEffort,
+  SpeedMode,
+  ThreadScrollState,
+  UiRateLimitSnapshot,
+  UiRateLimitWindow,
+  UiServerRequest,
+  UiServerRequestReply,
+  UiThreadTokenUsage,
+} from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed, ThreadComposerSlashCommand } from './components/content/ThreadComposer.vue'
 import type { GithubTipsScope, GithubTrendingProject, LocalDirectoryEntry, SessionStatusOverview } from './api/codexGateway'
 import { getPathLeafName, getPathParent, normalizePathForUi } from './pathUtils.js'
@@ -724,6 +802,7 @@ const {
   projectGroups,
   projectDisplayNameById,
   selectedThread,
+  selectedThreadBusyPhase,
   selectedThreadTokenUsage,
   selectedThreadScrollState,
   selectedThreadServerRequests,
@@ -780,11 +859,23 @@ const router = useRouter()
 const { isMobile } = useMobile()
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
+const pastEditComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
 const trendingProjects = ref<GithubTrendingProject[]>([])
 const isTrendingProjectsLoading = ref(false)
 const githubTipsScope = ref<GithubTipsScope>('trending-daily')
 const editingQueuedMessageState = ref<{ threadId: string; queueIndex: number } | null>(null)
+const pendingPastMessageEditState = ref<{
+  threadId: string
+  turnId: string
+  messageId: string
+  draft: ComposerDraftPayload
+} | null>(null)
+const activePastMessageEdit = computed(() => {
+  const pending = pendingPastMessageEditState.value
+  if (!pending) return null
+  return pending.threadId === selectedThreadId.value ? pending : null
+})
 const isRouteSyncInProgress = ref(false)
 const hasInitialized = ref(false)
 const newThreadCwd = ref('')
@@ -900,8 +991,17 @@ const composerCwd = computed(() => {
   if (isHomeRoute.value) return newThreadCwd.value.trim()
   return selectedThread.value?.cwd?.trim() ?? ''
 })
-const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
+const isSelectedThreadBusy = computed(() => !isHomeRoute.value && selectedThreadBusyPhase.value !== 'idle')
+const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThreadBusyPhase.value === 'turn')
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && selectedThreadId.value.trim().length > 0)
+
+watch(activePastMessageEdit, (nextEdit) => {
+  if (!nextEdit) return
+  void nextTick(() => {
+    if (activePastMessageEdit.value?.messageId !== nextEdit.messageId) return
+    pastEditComposerRef.value?.hydrateDraft(nextEdit.draft)
+  })
+})
 
 function formatCompactTokenCount(value: number): string {
   if (!Number.isFinite(value)) return '0'
@@ -958,6 +1058,131 @@ const threadContextSecondaryText = computed(() => {
 })
 
 const threadContextTooltip = computed(() => buildThreadContextTooltip(selectedThreadTokenUsage.value))
+
+function formatQuotaPlanType(planType: string | null | undefined): string {
+  if (!planType || planType === 'unknown') return ''
+  if (planType === 'edu') return 'Education'
+  return `${planType.slice(0, 1).toUpperCase()}${planType.slice(1)}`
+}
+
+function getQuotaWindows(quota: UiRateLimitSnapshot | null): UiRateLimitWindow[] {
+  if (!quota) return []
+  return [quota.primary, quota.secondary].filter((window): window is UiRateLimitWindow => window !== null)
+}
+
+function getWindowMinutes(window: UiRateLimitWindow): number | null {
+  return typeof window.windowMinutes === 'number'
+    ? window.windowMinutes
+    : typeof window.windowDurationMins === 'number'
+      ? window.windowDurationMins
+      : null
+}
+
+function pickFiveHourQuotaWindow(quota: UiRateLimitSnapshot | null): UiRateLimitWindow | null {
+  const windows = getQuotaWindows(quota)
+  const exactFiveHour = windows.find((window) => getWindowMinutes(window) === 5 * 60)
+  if (exactFiveHour) return exactFiveHour
+
+  const subWeekly = windows
+    .filter((window) => {
+      const minutes = getWindowMinutes(window)
+      return typeof minutes === 'number' && minutes < 7 * 24 * 60
+    })
+    .sort((first, second) => {
+      const firstMinutes = getWindowMinutes(first) ?? Number.MAX_SAFE_INTEGER
+      const secondMinutes = getWindowMinutes(second) ?? Number.MAX_SAFE_INTEGER
+      const firstDistance = Math.abs(firstMinutes - (5 * 60))
+      const secondDistance = Math.abs(secondMinutes - (5 * 60))
+      if (firstDistance !== secondDistance) return firstDistance - secondDistance
+      return firstMinutes - secondMinutes
+    })
+
+  return subWeekly[0] ?? windows[0] ?? null
+}
+
+function pickWeeklyQuotaWindow(quota: UiRateLimitSnapshot | null): UiRateLimitWindow | null {
+  const windows = getQuotaWindows(quota)
+  const exactWeekly = windows.find((window) => getWindowMinutes(window) === 7 * 24 * 60)
+  if (exactWeekly) return exactWeekly
+
+  const weeklyOrLonger = windows
+    .filter((window) => {
+      const minutes = getWindowMinutes(window)
+      return typeof minutes === 'number' && minutes >= 7 * 24 * 60
+    })
+    .sort((first, second) => (getWindowMinutes(first) ?? 0) - (getWindowMinutes(second) ?? 0))
+
+  return weeklyOrLonger[0] ?? windows.at(-1) ?? null
+}
+
+function formatRemainingLimitText(window: UiRateLimitWindow | null): string {
+  if (!window) return 'Unavailable'
+  const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(window.usedPercent)))
+  return `${remainingPercent}% left`
+}
+
+function formatRelativeResetTime(resetsAt: number | null): string {
+  if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return ''
+  const diffMs = resetsAt * 1000 - Date.now()
+  if (diffMs <= 0) return 'Resetting now'
+
+  const totalMinutes = Math.round(diffMs / 60000)
+  if (totalMinutes < 60) return `Resets in ${Math.max(1, totalMinutes)}m`
+
+  const totalHours = Math.round(totalMinutes / 60)
+  if (totalHours < 48) return `Resets in ${Math.max(1, totalHours)}h`
+
+  const totalDays = Math.round(totalHours / 24)
+  return `Resets in ${Math.max(1, totalDays)}d`
+}
+
+function formatAbsoluteResetTime(resetsAt: number | null): string {
+  if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return ''
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(resetsAt * 1000))
+}
+
+const settingsQuotaSnapshot = computed<UiRateLimitSnapshot | null>(() => (
+  codexQuota.value ?? accountRateLimitSnapshots.value[0] ?? null
+))
+const settingsQuotaPlanText = computed(() => formatQuotaPlanType(settingsQuotaSnapshot.value?.planType))
+const settingsFiveHourWindow = computed(() => pickFiveHourQuotaWindow(settingsQuotaSnapshot.value))
+const settingsWeeklyWindow = computed(() => pickWeeklyQuotaWindow(settingsQuotaSnapshot.value))
+const settingsFiveHourLimitText = computed(() => (
+  settingsQuotaSnapshot.value ? formatRemainingLimitText(settingsFiveHourWindow.value) : 'Awaiting data'
+))
+const settingsFiveHourResetText = computed(() => {
+  if (!settingsQuotaSnapshot.value) return 'Waiting for account quota sync'
+  return formatRelativeResetTime(settingsFiveHourWindow.value?.resetsAt ?? null) || 'Reset time unavailable'
+})
+const settingsWeeklyLimitText = computed(() => (
+  settingsQuotaSnapshot.value ? formatRemainingLimitText(settingsWeeklyWindow.value) : 'Awaiting data'
+))
+const settingsWeeklyResetText = computed(() => {
+  if (!settingsQuotaSnapshot.value) return 'Waiting for account quota sync'
+  return formatAbsoluteResetTime(settingsWeeklyWindow.value?.resetsAt ?? null) || 'Refresh time unavailable'
+})
+const settingsQuotaStatusText = computed(() => {
+  const quota = settingsQuotaSnapshot.value
+  if (!quota) {
+    return 'Current Codex quota will appear here once account/rateLimits data is available.'
+  }
+
+  if (quota.credits?.unlimited) {
+    return 'Unlimited credits on the current account.'
+  }
+
+  if (quota.credits?.hasCredits && quota.credits.balance) {
+    return `Current account credits: ${quota.credits.balance}.`
+  }
+
+  return 'Current Codex account quota.'
+})
+
 const newThreadFolderOptions = computed(() => {
   const options: Array<{ value: string; label: string }> = []
   const seenCwds = new Set<string>()
@@ -1450,7 +1675,6 @@ async function syncAfterMobileResume(): Promise<void> {
 
 function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
   const text = payload.text
-  scheduleMobileConversationJumpToLatest()
   const editingState = editingQueuedMessageState.value
   const queueInsertIndex =
     payload.mode === 'queue'
@@ -1460,10 +1684,34 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
       : undefined
   editingQueuedMessageState.value = null
   if (isHomeRoute.value) {
+    scheduleMobileConversationJumpToLatest()
     void submitFirstMessageForNewThread(text, payload.imageUrls, payload.skills, payload.fileAttachments)
     return
   }
+  scheduleMobileConversationJumpToLatest()
   void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+}
+
+function onSubmitPastEditMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
+  const pendingPastEdit = activePastMessageEdit.value
+  if (!pendingPastEdit) return
+  if (isSelectedThreadBusy.value) {
+    window.alert('Finish the current thread activity before committing this edit.')
+    return
+  }
+  void (async () => {
+    const didRollback = await rollbackSelectedThread(pendingPastEdit.turnId)
+    if (!didRollback) return
+    pendingPastMessageEditState.value = null
+    scheduleMobileConversationJumpToLatest()
+    await sendMessageToSelectedThread(
+      payload.text,
+      payload.imageUrls,
+      payload.skills,
+      'steer',
+      payload.fileAttachments,
+    )
+  })()
 }
 
 function formatTrendingTipMeta(project: GithubTrendingProject): string {
@@ -1511,12 +1759,16 @@ function onEditQueuedMessage(messageId: string): void {
   editingQueuedMessageState.value = selectedThreadId.value
     ? { threadId: selectedThreadId.value, queueIndex }
     : null
+  pendingPastMessageEditState.value = null
   setSelectedCollaborationMode(message.collaborationMode)
   if (typeof message.modelId === 'string') {
     setSelectedModelId(message.modelId)
   }
   if (typeof message.reasoningEffort === 'string') {
     setSelectedReasoningEffort(message.reasoningEffort as ReasoningEffort | '')
+  }
+  if (message.speedMode === 'fast' || message.speedMode === 'standard') {
+    void updateSelectedSpeedMode(message.speedMode)
   }
   const payload: ComposerDraftPayload = {
     text: message.text,
@@ -1535,14 +1787,13 @@ async function onEditPastMessage(payload: { messageId: string }): Promise<void> 
   const turnId = original.turnId?.trim() ?? ''
   if (!turnId) return
 
-  const composer = threadComposerRef.value
-  if (!composer) {
-    window.alert('Cannot edit this message right now.')
-    return
-  }
-
-  if (composer.hasUnsavedDraft()) {
-    const shouldReplace = window.confirm('Replace the current draft with this earlier message for editing?')
+  const editComposer = pastEditComposerRef.value
+  if (
+    activePastMessageEdit.value
+    && activePastMessageEdit.value.messageId !== payload.messageId
+    && editComposer?.hasUnsavedDraft()
+  ) {
+    const shouldReplace = window.confirm('Replace the current pending edit with this earlier message?')
     if (!shouldReplace) return
   }
 
@@ -1558,11 +1809,17 @@ async function onEditPastMessage(payload: { messageId: string }): Promise<void> 
   }
 
   editingQueuedMessageState.value = null
-  const didRollback = await rollbackSelectedThread(turnId)
-  if (!didRollback) return
-
+  pendingPastMessageEditState.value = selectedThreadId.value
+    ? { threadId: selectedThreadId.value, turnId, messageId: payload.messageId, draft: draftPayload }
+    : null
   await nextTick()
-  threadComposerRef.value?.hydrateDraft(draftPayload)
+  pastEditComposerRef.value?.hydrateDraft(draftPayload)
+}
+
+function cancelPastMessageEdit(): void {
+  if (!activePastMessageEdit.value) return
+  pendingPastMessageEditState.value = null
+  pastEditComposerRef.value?.clearDraft()
 }
 
 
@@ -1935,6 +2192,9 @@ function onCompactThread(): void {
 }
 
 function onRollback(payload: { turnId: string }): void {
+  if (activePastMessageEdit.value) {
+    pendingPastMessageEditState.value = null
+  }
   void rollbackSelectedThread(payload.turnId)
 }
 
@@ -2467,6 +2727,30 @@ async function submitFirstMessageForNewThread(
   @apply w-full shrink-0 px-2 sm:px-6;
 }
 
+.composer-edit-panel {
+  @apply mb-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-2.5 sm:p-3;
+}
+
+.composer-edit-panel-header {
+  @apply mb-2 flex items-start justify-between gap-3;
+}
+
+.composer-edit-panel-copy {
+  @apply min-w-0 flex flex-col gap-0.5;
+}
+
+.composer-edit-panel-label {
+  @apply font-medium text-sm text-amber-950;
+}
+
+.composer-edit-panel-text {
+  @apply text-xs leading-5 text-amber-900/85;
+}
+
+.composer-edit-panel-action {
+  @apply shrink-0 rounded-full border border-amber-300 bg-white/85 px-3 py-1 text-xs font-medium text-amber-900 transition hover:bg-white;
+}
+
 .content-header-review-button {
   @apply rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50;
 }
@@ -2483,6 +2767,18 @@ async function submitFirstMessageForNewThread(
   .composer-with-queue {
     @apply px-1;
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.125rem);
+  }
+
+  .composer-edit-panel {
+    @apply mb-1.5 p-2;
+  }
+
+  .composer-edit-panel-header {
+    @apply mb-1.5 gap-2;
+  }
+
+  .composer-edit-panel-text {
+    @apply text-[11px];
   }
 
   .content-header-review-button {
@@ -2941,6 +3237,10 @@ async function submitFirstMessageForNewThread(
 
 .sidebar-settings-kv-value {
   @apply mt-1 block break-words text-xs font-medium text-zinc-700;
+}
+
+.sidebar-settings-kv-meta {
+  @apply mt-1 block text-[11px] text-zinc-500;
 }
 
 .sidebar-settings-chip-list {

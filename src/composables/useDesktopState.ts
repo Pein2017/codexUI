@@ -67,6 +67,7 @@ const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
 const SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-reasoning-by-context.v1'
+const SELECTED_SPEED_MODE_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-speed-by-context.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
@@ -350,6 +351,10 @@ function normalizeReasoningEffortValue(value: unknown): ReasoningEffort | '' {
   return REASONING_EFFORT_OPTIONS.includes(normalized) ? normalized : ''
 }
 
+function normalizeSpeedModeValue(value: unknown): SpeedMode {
+  return value === 'fast' ? 'fast' : 'standard'
+}
+
 function loadSelectedReasoningEffortMap(): Record<string, ReasoningEffort> {
   if (typeof window === 'undefined') return {}
 
@@ -383,6 +388,40 @@ function saveSelectedReasoningEffortMap(state: Record<string, ReasoningEffort>):
   window.localStorage.setItem(SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
 }
 
+function loadSelectedSpeedModeMap(): Record<string, SpeedMode> {
+  if (typeof window === 'undefined') return {}
+
+  try {
+    const raw = window.localStorage.getItem(SELECTED_SPEED_MODE_BY_CONTEXT_STORAGE_KEY)
+    if (!raw) return {}
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+
+    const next: Record<string, SpeedMode> = {}
+    for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const normalizedContextId = typeof contextId === 'string' ? contextId.trim() : ''
+      if (!normalizedContextId) continue
+      const normalizedMode = normalizeSpeedModeValue(value)
+      if (normalizedMode !== 'standard') {
+        next[normalizedContextId] = normalizedMode
+      }
+    }
+    return next
+  } catch {
+    return {}
+  }
+}
+
+function saveSelectedSpeedModeMap(state: Record<string, SpeedMode>): void {
+  if (typeof window === 'undefined') return
+  if (Object.keys(state).length === 0) {
+    window.localStorage.removeItem(SELECTED_SPEED_MODE_BY_CONTEXT_STORAGE_KEY)
+    return
+  }
+  window.localStorage.setItem(SELECTED_SPEED_MODE_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
+}
+
 function readSelectedModelId(
   state: Record<string, string>,
   threadId: string,
@@ -399,6 +438,15 @@ function readSelectedReasoningEffort(
 ): ReasoningEffort | '' {
   const contextId = toCollaborationModeContextId(threadId)
   return normalizeReasoningEffortValue(state[contextId]) || normalizeReasoningEffortValue(fallbackEffort) || 'medium'
+}
+
+function readSelectedSpeedMode(
+  state: Record<string, SpeedMode>,
+  threadId: string,
+  fallbackMode: SpeedMode = 'standard',
+): SpeedMode {
+  const contextId = toCollaborationModeContextId(threadId)
+  return normalizeSpeedModeValue(state[contextId] ?? fallbackMode)
 }
 
 function loadProjectOrder(): string[] {
@@ -691,23 +739,66 @@ function normalizeMessageText(value: string): string {
   return value.replace(/\s+/gu, ' ').trim()
 }
 
-function removeRedundantLiveAgentMessages(previous: UiMessage[], incoming: UiMessage[]): UiMessage[] {
+function removeRedundantLiveAgentMessages(
+  previous: UiMessage[],
+  incoming: UiMessage[],
+  options: { threadSettled?: boolean } = {},
+): UiMessage[] {
+  const incomingAssistantMessages = incoming.filter((message) => message.role === 'assistant')
   const incomingAssistantTexts = new Set(
-    incoming
-      .filter((message) => message.role === 'assistant')
+    incomingAssistantMessages
       .map((message) => normalizeMessageText(message.text))
       .filter((text) => text.length > 0),
   )
+  const incomingAssistantTurnIds = new Set(
+    incomingAssistantMessages
+      .map((message) => message.turnId?.trim() ?? '')
+      .filter((turnId) => turnId.length > 0),
+  )
+  const incomingAssistantTurnIndices = new Set(
+    incomingAssistantMessages
+      .map((message) => message.turnIndex)
+      .filter((turnIndex): turnIndex is number => typeof turnIndex === 'number' && Number.isFinite(turnIndex)),
+  )
 
-  if (incomingAssistantTexts.size === 0) {
+  if (
+    incomingAssistantTexts.size === 0
+    && incomingAssistantTurnIds.size === 0
+    && incomingAssistantTurnIndices.size === 0
+    && options.threadSettled !== true
+  ) {
     return previous
   }
 
   const next = previous.filter((message) => {
     if (message.messageType !== 'agentMessage.live') return true
+
     const normalized = normalizeMessageText(message.text)
     if (normalized.length === 0) return false
-    return !incomingAssistantTexts.has(normalized)
+
+    const turnId = message.turnId?.trim() ?? ''
+    if (turnId && incomingAssistantTurnIds.has(turnId)) {
+      return false
+    }
+
+    if (typeof message.turnIndex === 'number' && incomingAssistantTurnIndices.has(message.turnIndex)) {
+      return false
+    }
+
+    if (incomingAssistantTexts.has(normalized)) {
+      return false
+    }
+
+    if (options.threadSettled === true) {
+      if (!turnId && typeof message.turnIndex !== 'number') {
+        return false
+      }
+      if (incomingAssistantMessages.length > 0) {
+        return false
+      }
+    }
+
+    return true
   })
 
   return next.length === previous.length ? previous : next
@@ -1065,6 +1156,7 @@ export function useDesktopState() {
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const inProgressById = ref<Record<string, boolean>>({})
+  const compactingById = ref<Record<string, boolean>>({})
   type FileAttachment = { label: string; path: string; fsPath: string }
   type QueuedMessage = {
     id: string
@@ -1075,6 +1167,7 @@ export function useDesktopState() {
     modelId: string
     reasoningEffort: ReasoningEffort | ''
     collaborationMode: CollaborationModeKind
+    speedMode: SpeedMode
   }
   type PendingTurnRequest = {
     text: string
@@ -1083,6 +1176,7 @@ export function useDesktopState() {
     fileAttachments: FileAttachment[]
     effort: ReasoningEffort | ''
     collaborationMode: CollaborationModeKind
+    speedMode: SpeedMode
     fallbackRetried: boolean
   }
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessage[]>>({})
@@ -1099,8 +1193,10 @@ export function useDesktopState() {
   )
   const selectedModelIdByContext = ref<Record<string, string>>(loadSelectedModelIdMap())
   const selectedReasoningEffortByContext = ref<Record<string, ReasoningEffort>>(loadSelectedReasoningEffortMap())
+  const selectedSpeedModeByContext = ref<Record<string, SpeedMode>>(loadSelectedSpeedModeMap())
   const defaultModelId = ref(loadLegacySelectedModelId())
   const defaultReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const defaultSpeedMode = ref<SpeedMode>('standard')
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
@@ -1110,7 +1206,10 @@ export function useDesktopState() {
   const selectedReasoningEffort = ref<ReasoningEffort | ''>(
     readSelectedReasoningEffort(selectedReasoningEffortByContext.value, selectedThreadId.value, defaultReasoningEffort.value),
   )
-  const selectedSpeedMode = ref<SpeedMode>('standard')
+  const selectedSpeedMode = ref<SpeedMode>(
+    readSelectedSpeedMode(selectedSpeedModeByContext.value, selectedThreadId.value, defaultSpeedMode.value),
+  )
+  const appliedSpeedMode = ref<SpeedMode>('standard')
   clearLegacyThreadReadStateStorage()
   const seenUpdatedAtByThreadId = ref<Record<string, string>>({})
   const scrollStateByThreadId = ref<Record<string, ThreadScrollState>>(loadThreadScrollStateMap())
@@ -1152,6 +1251,7 @@ export function useDesktopState() {
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
   const pendingThreadMessageRefresh = new Set<string>()
+  let persistThreadScrollStateTimer: number | null = null
   let hasHydratedWorkspaceRootsState = false
   let activeReasoningItemId = ''
   let shouldAutoScrollOnNextAgentEvent = false
@@ -1163,6 +1263,13 @@ export function useDesktopState() {
   const selectedThread = computed(() =>
     allThreads.value.find((thread) => thread.id === selectedThreadId.value) ?? null,
   )
+  const selectedThreadBusyPhase = computed<'idle' | 'turn' | 'compacting'>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return 'idle'
+    if (inProgressById.value[threadId] === true) return 'turn'
+    if (compactingById.value[threadId] === true) return 'compacting'
+    return 'idle'
+  })
   const selectedThreadScrollState = computed<ThreadScrollState | null>(
     () => scrollStateByThreadId.value[selectedThreadId.value] ?? null,
   )
@@ -1288,6 +1395,11 @@ export function useDesktopState() {
       threadId,
       defaultReasoningEffort.value,
     )
+    selectedSpeedMode.value = readSelectedSpeedMode(
+      selectedSpeedModeByContext.value,
+      threadId,
+      defaultSpeedMode.value,
+    )
   }
 
   function setSelectedThreadId(nextThreadId: string): void {
@@ -1339,6 +1451,22 @@ export function useDesktopState() {
     }
   }
 
+  function setSelectedSpeedModeForContext(threadId: string, mode: SpeedMode): void {
+    const normalizedMode = normalizeSpeedModeValue(mode)
+    const contextId = toCollaborationModeContextId(threadId)
+    const nextState = normalizedMode === 'fast'
+      ? {
+          ...selectedSpeedModeByContext.value,
+          [contextId]: normalizedMode,
+        }
+      : omitKey(selectedSpeedModeByContext.value, contextId)
+    selectedSpeedModeByContext.value = nextState
+    saveSelectedSpeedModeMap(nextState)
+    if (threadId === selectedThreadId.value) {
+      syncSelectedRuntimeForContext(threadId)
+    }
+  }
+
   function copyRuntimeSelectionBetweenContexts(sourceThreadId: string, targetThreadId: string): void {
     setSelectedModelIdForContext(targetThreadId, resolveSelectedModelIdForContext(sourceThreadId))
     setSelectedReasoningEffortForContext(targetThreadId, readSelectedReasoningEffort(
@@ -1346,18 +1474,27 @@ export function useDesktopState() {
       sourceThreadId,
       defaultReasoningEffort.value,
     ))
+    setSelectedSpeedModeForContext(targetThreadId, readSelectedSpeedMode(
+      selectedSpeedModeByContext.value,
+      sourceThreadId,
+      defaultSpeedMode.value,
+    ))
   }
 
   function applyRuntimeSelection(selection: {
     modelId?: string
     reasoningEffort?: ReasoningEffort | ''
     collaborationMode?: CollaborationModeKind
+    speedMode?: SpeedMode
   }): void {
     if (typeof selection.modelId === 'string') {
       setSelectedModelId(selection.modelId)
     }
     if (selection.reasoningEffort !== undefined) {
       setSelectedReasoningEffort(selection.reasoningEffort)
+    }
+    if (selection.speedMode) {
+      setSelectedSpeedModeForContext(selectedThreadId.value, selection.speedMode)
     }
     if (selection.collaborationMode) {
       setSelectedCollaborationMode(selection.collaborationMode)
@@ -1462,9 +1599,11 @@ export function useDesktopState() {
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(threadId, {
         label: 'Thinking',
-        details: buildPendingTurnDetails(MODEL_FALLBACK_ID, pending.effort, pending.collaborationMode),
+        details: buildPendingTurnDetails(MODEL_FALLBACK_ID, pending.effort, pending.collaborationMode, pending.speedMode),
       })
       setThreadInProgress(threadId, true)
+
+      await ensureSpeedModeApplied(pending.speedMode)
 
       if (resumedThreadById.value[threadId] !== true) {
         await resumeThread(threadId)
@@ -1508,25 +1647,30 @@ export function useDesktopState() {
     setSelectedReasoningEffortForContext(selectedThreadId.value, effort)
   }
 
-  async function updateSelectedSpeedMode(mode: SpeedMode): Promise<void> {
-    const nextMode: SpeedMode = mode === 'fast' ? 'fast' : 'standard'
-    if (isUpdatingSpeedMode.value || selectedSpeedMode.value === nextMode) {
-      return
-    }
+  async function ensureSpeedModeApplied(mode: SpeedMode): Promise<void> {
+    const nextMode = normalizeSpeedModeValue(mode)
+    if (isUpdatingSpeedMode.value || appliedSpeedMode.value === nextMode) return
 
-    const previousMode = selectedSpeedMode.value
-    selectedSpeedMode.value = nextMode
     isUpdatingSpeedMode.value = true
     error.value = ''
 
     try {
       await setCodexSpeedMode(nextMode)
+      appliedSpeedMode.value = nextMode
     } catch (unknownError) {
-      selectedSpeedMode.value = previousMode
       error.value = unknownError instanceof Error ? unknownError.message : 'Failed to update Fast mode'
+      throw unknownError
     } finally {
       isUpdatingSpeedMode.value = false
     }
+  }
+
+  async function updateSelectedSpeedMode(mode: SpeedMode): Promise<void> {
+    const nextMode: SpeedMode = mode === 'fast' ? 'fast' : 'standard'
+    if (selectedSpeedMode.value === nextMode) {
+      return
+    }
+    setSelectedSpeedModeForContext(selectedThreadId.value, nextMode)
   }
 
   async function refreshCollaborationModes(): Promise<void> {
@@ -1566,8 +1710,9 @@ export function useDesktopState() {
         ? currentConfig.model
         : (modelIds[0] ?? '')
       defaultReasoningEffort.value = normalizeReasoningEffortValue(currentConfig.reasoningEffort) || 'medium'
+      defaultSpeedMode.value = normalizeSpeedModeValue(currentConfig.speedMode)
+      appliedSpeedMode.value = defaultSpeedMode.value
       syncSelectedRuntimeForContext(selectedThreadId.value)
-      selectedSpeedMode.value = currentConfig.speedMode
     } catch {
       // Keep chat UI usable even if model metadata is temporarily unavailable.
     }
@@ -1695,7 +1840,7 @@ export function useDesktopState() {
     const flaggedGroups: UiProjectGroup[] = withTitles.map((group) => ({
       projectName: group.projectName,
       threads: group.threads.map((thread) => {
-        const inProgress = inProgressById.value[thread.id] === true
+        const inProgress = isThreadBusy(thread.id)
         const pendingRequestState = readPendingRequestState(getThreadPendingRequests(thread.id))
         const isSelected = selectedThreadId.value === thread.id
         const unreadByEvent = eventUnreadByThreadId.value[thread.id] === true
@@ -1787,7 +1932,7 @@ export function useDesktopState() {
     const nextScrollState = pruneThreadStateMap(scrollStateByThreadId.value, activeThreadIds)
     if (nextScrollState !== scrollStateByThreadId.value) {
       scrollStateByThreadId.value = nextScrollState
-      saveThreadScrollStateMap(nextScrollState)
+      schedulePersistThreadScrollState()
     }
     loadedMessagesByThreadId.value = pruneThreadStateMap(loadedMessagesByThreadId.value, activeThreadIds)
     loadedVersionByThreadId.value = pruneThreadStateMap(loadedVersionByThreadId.value, activeThreadIds)
@@ -1916,6 +2061,33 @@ export function useDesktopState() {
     applyThreadFlags()
   }
 
+  function setThreadCompacting(threadId: string, nextCompacting: boolean): void {
+    if (!threadId) return
+    const currentValue = compactingById.value[threadId] === true
+    if (currentValue === nextCompacting) return
+    if (nextCompacting) {
+      compactingById.value = {
+        ...compactingById.value,
+        [threadId]: true,
+      }
+    } else {
+      compactingById.value = omitKey(compactingById.value, threadId)
+    }
+    applyThreadFlags()
+  }
+
+  function isThreadBusy(threadId: string): boolean {
+    if (!threadId) return false
+    return inProgressById.value[threadId] === true || compactingById.value[threadId] === true
+  }
+
+  function busyThreadMap(): Record<string, boolean> {
+    return {
+      ...inProgressById.value,
+      ...compactingById.value,
+    }
+  }
+
   function markThreadUnreadByEvent(threadId: string): void {
     if (!threadId) return
     if (threadId === selectedThreadId.value) return
@@ -2005,6 +2177,17 @@ export function useDesktopState() {
     return thread?.updatedAtIso ?? ''
   }
 
+  function schedulePersistThreadScrollState(): void {
+    if (typeof window === 'undefined') return
+    if (persistThreadScrollStateTimer) {
+      window.clearTimeout(persistThreadScrollStateTimer)
+    }
+    persistThreadScrollStateTimer = window.setTimeout(() => {
+      persistThreadScrollStateTimer = null
+      saveThreadScrollStateMap(scrollStateByThreadId.value)
+    }, 120)
+  }
+
   function setThreadScrollState(threadId: string, nextState: ThreadScrollState): void {
     if (!threadId) return
 
@@ -2030,7 +2213,7 @@ export function useDesktopState() {
       ...scrollStateByThreadId.value,
       [threadId]: normalizedState,
     }
-    saveThreadScrollStateMap(scrollStateByThreadId.value)
+    schedulePersistThreadScrollState()
   }
 
   function shouldKeepThreadAtBottom(threadId: string): boolean {
@@ -2072,6 +2255,12 @@ export function useDesktopState() {
       ...livePlanMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+  }
+
+  function clearLiveAgentMessagesForThread(threadId: string): void {
+    if (!threadId) return
+    if (!(threadId in liveAgentMessagesByThreadId.value)) return
+    liveAgentMessagesByThreadId.value = omitKey(liveAgentMessagesByThreadId.value, threadId)
   }
 
   function upsertLivePlanMessage(threadId: string, nextMessage: UiMessage): void {
@@ -2157,6 +2346,7 @@ export function useDesktopState() {
   function clearCompletedTurnLiveState(threadId: string): void {
     if (!threadId) return
     clearLivePlansForThread(threadId)
+    clearLiveAgentMessagesForThread(threadId)
     clearLiveReasoningForThread(threadId)
     clearLiveOverlayTimestamp(threadId)
     setTurnActivityForThread(threadId, null)
@@ -2900,16 +3090,24 @@ export function useDesktopState() {
     return ''
   }
 
-  function readAgentMessageDelta(notification: RpcNotification): { messageId: string; delta: string } | null {
+  function readAgentMessageDelta(
+    notification: RpcNotification,
+  ): { messageId: string; delta: string; turnId: string; turnIndex: number | undefined } | null {
     const params = asRecord(notification.params)
     if (!params) return null
 
     // Канонический live-канал агентского текста.
     if (notification.method === 'item/agentMessage/delta') {
+      const turnContext = readNotificationTurnContext(notification)
       const messageId = readString(params.itemId)
       const delta = readString(params.delta)
       if (!messageId || !delta) return null
-      return { messageId, delta }
+      return {
+        messageId,
+        delta,
+        turnId: turnContext?.turnId || '',
+        turnIndex: turnContext?.turnIndex,
+      }
     }
 
     return null
@@ -2922,6 +3120,7 @@ export function useDesktopState() {
     if (notification.method === 'item/completed') {
       const item = asRecord(params.item)
       if (!item || item.type !== 'agentMessage') return null
+      const turnContext = readNotificationTurnContext(notification)
       const id = readString(item.id)
       const text = readString(item.text)
       if (!id || !text) return null
@@ -2930,6 +3129,8 @@ export function useDesktopState() {
         role: 'assistant',
         text,
         messageType: 'agentMessage.live',
+        turnId: turnContext?.turnId || undefined,
+        turnIndex: turnContext?.turnIndex,
       }
     }
 
@@ -3426,6 +3627,8 @@ export function useDesktopState() {
         role: 'assistant',
         text: nextText,
         messageType: 'agentMessage.live',
+        turnId: liveAgentMessageDelta.turnId || existing?.turnId,
+        turnIndex: liveAgentMessageDelta.turnIndex ?? existing?.turnIndex,
       })
     }
 
@@ -3715,13 +3918,17 @@ export function useDesktopState() {
       const mergedWithInProgress = mergeIncomingWithLocalInProgressThreads(
         sourceGroups.value,
         orderedGroups,
-        inProgressById.value,
+        busyThreadMap(),
       )
       sourceGroups.value = mergeThreadGroups(sourceGroups.value, mergedWithInProgress)
       const flatSourceThreads = flattenThreads(sourceGroups.value)
       seedSeenUpdatedAtForThreads(flatSourceThreads)
       inProgressById.value = pruneThreadStateMap(
         inProgressById.value,
+        new Set(flatSourceThreads.map((thread) => thread.id)),
+      )
+      compactingById.value = pruneThreadStateMap(
+        compactingById.value,
         new Set(flatSourceThreads.map((thread) => thread.id)),
       )
       applyThreadFlags()
@@ -3770,7 +3977,9 @@ export function useDesktopState() {
       setPersistedMessagesForThread(threadId, mergedMessages)
 
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
-      const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
+      const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages, {
+        threadSettled: inProgress !== true,
+      })
       setLiveAgentMessagesForThread(threadId, nextLiveAgent)
       removeLiveCommandsPersistedIn(threadId, nextMessages)
       removeLiveFileChangesPersistedIn(threadId, nextMessages)
@@ -3933,8 +4142,8 @@ export function useDesktopState() {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId || !Number.isInteger(turnIndex) || turnIndex < 0) return ''
 
-    if (inProgressById.value[normalizedThreadId] === true) {
-      error.value = 'Finish the current turn before forking from a response.'
+    if (isThreadBusy(normalizedThreadId)) {
+      error.value = 'Finish the current thread activity before forking from a response.'
       return ''
     }
 
@@ -4046,6 +4255,7 @@ export function useDesktopState() {
       modelId?: string
       reasoningEffort?: ReasoningEffort | ''
       collaborationMode?: CollaborationModeKind
+      speedMode?: SpeedMode
     },
   ): Promise<void> {
     if (isUpdatingSpeedMode.value) return
@@ -4059,11 +4269,13 @@ export function useDesktopState() {
     }
 
     const isInProgress = inProgressById.value[threadId] === true
+    const isCompacting = compactingById.value[threadId] === true
     const pendingModelId = runtimeSelection?.modelId?.trim() ?? selectedModelId.value.trim()
     const pendingReasoningEffort = runtimeSelection?.reasoningEffort ?? selectedReasoningEffort.value
     const pendingCollaborationMode = runtimeSelection?.collaborationMode ?? selectedCollaborationMode.value
+    const pendingSpeedMode = runtimeSelection?.speedMode ?? selectedSpeedMode.value
 
-    if (isInProgress && mode === 'queue') {
+    if ((isInProgress && mode === 'queue') || isCompacting) {
       const queue = queuedMessagesByThreadId.value[threadId] ?? []
       const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const nextQueue = [...queue]
@@ -4079,6 +4291,7 @@ export function useDesktopState() {
         modelId: pendingModelId,
         reasoningEffort: pendingReasoningEffort,
         collaborationMode: pendingCollaborationMode,
+        speedMode: pendingSpeedMode,
       })
       queuedMessagesByThreadId.value = {
         ...queuedMessagesByThreadId.value,
@@ -4099,6 +4312,7 @@ export function useDesktopState() {
           modelId: pendingModelId,
           reasoningEffort: pendingReasoningEffort,
           collaborationMode: pendingCollaborationMode,
+          speedMode: pendingSpeedMode,
         },
       ).catch((unknownError) => {
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
@@ -4119,6 +4333,7 @@ export function useDesktopState() {
           pendingModelId,
           pendingReasoningEffort,
           pendingCollaborationMode,
+          pendingSpeedMode,
         ),
       },
     )
@@ -4136,6 +4351,7 @@ export function useDesktopState() {
           modelId: pendingModelId,
           reasoningEffort: pendingReasoningEffort,
           collaborationMode: pendingCollaborationMode,
+          speedMode: pendingSpeedMode,
         },
       )
     } catch (unknownError) {
@@ -4197,6 +4413,7 @@ export function useDesktopState() {
             selectedModelId.value,
             selectedReasoningEffort.value,
             selectedCollaborationMode.value,
+            selectedSpeedMode.value,
           ),
         },
       )
@@ -4245,11 +4462,13 @@ export function useDesktopState() {
       modelId?: string
       reasoningEffort?: ReasoningEffort | ''
       collaborationMode?: CollaborationModeKind
+      speedMode?: SpeedMode
     },
   ): Promise<void> {
     const modelId = runtimeSelection?.modelId?.trim() ?? selectedModelId.value.trim()
     const reasoningEffort = runtimeSelection?.reasoningEffort ?? selectedReasoningEffort.value
     const collaborationMode = runtimeSelection?.collaborationMode ?? selectedCollaborationMode.value
+    const speedMode = runtimeSelection?.speedMode ?? selectedSpeedMode.value
     const normalizedText = nextText.trim()
     const normalizedSkills = skills.map((skill) => ({ name: skill.name, path: skill.path }))
     const normalizedFileAttachments = fileAttachments.map((file) => ({ ...file }))
@@ -4261,10 +4480,13 @@ export function useDesktopState() {
       fileAttachments: normalizedFileAttachments,
       effort: reasoningEffort,
       collaborationMode,
+      speedMode,
       fallbackRetried: false,
     })
 
     try {
+      await ensureSpeedModeApplied(speedMode)
+
       if (resumedThreadById.value[threadId] !== true) {
         await resumeThread(threadId)
       }
@@ -4291,6 +4513,7 @@ export function useDesktopState() {
             fileAttachments: normalizedFileAttachments,
             effort: reasoningEffort,
             collaborationMode,
+            speedMode,
             fallbackRetried: true,
           })
           startedTurnId = await startThreadTurn(
@@ -4330,6 +4553,7 @@ export function useDesktopState() {
   }
 
   async function processQueuedMessages(threadId: string): Promise<void> {
+    if (compactingById.value[threadId] === true) return
     if (queueProcessingByThreadId.value[threadId] === true) return
     const queue = queuedMessagesByThreadId.value[threadId]
     if (!queue || queue.length === 0) return
@@ -4383,13 +4607,13 @@ export function useDesktopState() {
   async function compactSelectedThread(): Promise<void> {
     const threadId = selectedThreadId.value
     if (!threadId) return
-    if (inProgressById.value[threadId] === true) return
+    if (isThreadBusy(threadId)) return
 
     error.value = ''
     shouldAutoScrollOnNextAgentEvent = true
     setTurnSummaryForThread(threadId, null)
     setTurnErrorForThread(threadId, null)
-    setThreadInProgress(threadId, true)
+    setThreadCompacting(threadId, true)
     clearDelayedCompactOverlay(threadId)
     delayedCompactOverlayTimerByThreadId.set(threadId, window.setTimeout(() => {
       delayedCompactOverlayTimerByThreadId.delete(threadId)
@@ -4407,10 +4631,13 @@ export function useDesktopState() {
       pendingThreadsRefresh = true
       await syncFromNotifications()
       scheduleDelayedTurnSync(threadId)
+      setThreadCompacting(threadId, false)
+      setTurnActivityForThread(threadId, null)
+      void processQueuedMessages(threadId)
     } catch (unknownError) {
       clearDelayedCompactOverlay(threadId)
       shouldAutoScrollOnNextAgentEvent = false
-      setThreadInProgress(threadId, false)
+      setThreadCompacting(threadId, false)
       setTurnActivityForThread(threadId, null)
       const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to compact thread'
       setTurnErrorForThread(threadId, errorMessage)
@@ -4677,7 +4904,7 @@ export function useDesktopState() {
       const currentVersion = currentThreadVersion(threadId)
       const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
       const hasVersionChange = currentVersion.length > 0 && currentVersion !== loadedVersion
-      const isInProgress = inProgressById.value[threadId] === true
+      const isInProgress = isThreadBusy(threadId)
 
       if (isInProgress || hasVersionChange) {
         await loadMessages(threadId, { silent: true })
@@ -4716,7 +4943,7 @@ export function useDesktopState() {
       if (!activeThreadId) return
 
       const isActiveDirty = threadIdsToRefresh.has(activeThreadId)
-      const isInProgress = inProgressById.value[activeThreadId] === true
+      const isInProgress = isThreadBusy(activeThreadId)
       const currentVersion = currentThreadVersion(activeThreadId)
       const loadedVersion = loadedVersionByThreadId.value[activeThreadId] ?? ''
       const hasVersionChange = currentVersion.length > 0 && currentVersion !== loadedVersion
@@ -4830,6 +5057,7 @@ export function useDesktopState() {
     turnSummaryByThreadId.value = {}
     turnErrorByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    compactingById.value = {}
     queuedMessagesByThreadId.value = {}
     queueProcessingByThreadId.value = {}
     codexRateLimit.value = null
@@ -4881,6 +5109,7 @@ export function useDesktopState() {
     projectGroups,
     projectDisplayNameById,
     selectedThread,
+    selectedThreadBusyPhase,
     selectedThreadTokenUsage,
     selectedThreadScrollState,
     selectedThreadServerRequests,

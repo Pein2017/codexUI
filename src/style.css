@@ -97,6 +97,10 @@
   @apply text-zinc-400;
 }
 
+:root.dark .sidebar-settings-kv-meta {
+  @apply text-zinc-400;
+}
+
 :root.dark .sidebar-settings-rate-limits {
   @apply border-zinc-700;
 }
