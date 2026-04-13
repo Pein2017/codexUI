@@ -101,22 +101,13 @@
               <span>Chronological list</span>
               <span v-if="threadViewMode === 'chronological'">✓</span>
             </button>
-            <button
-              v-if="unreadThreadCount > 0"
-              class="organize-menu-item"
-              type="button"
-              @click="onMarkAllSeen"
-            >
-              <span>Mark all seen</span>
-              <span>{{ unreadThreadCount }}</span>
-            </button>
           </div>
         </div>
       </template>
     </SidebarMenuRow>
 
     <div
-      v-if="statusFilterCounts.all > 0"
+      v-if="statusFilterCounts.all > 0 || threadStatusFilter !== 'all'"
       class="thread-status-filter-row"
       role="tablist"
       aria-label="Filter threads by status"
@@ -147,6 +138,23 @@
       >
         <span>New</span>
         <span class="thread-status-filter-count">{{ statusFilterCounts.new }}</span>
+      </button>
+      <button
+        v-if="threadStatusFilter !== 'all'"
+        class="thread-status-filter-action"
+        type="button"
+        @click="setThreadStatusFilter('all')"
+      >
+        Show all
+      </button>
+      <button
+        v-if="visibleUnreadThreadIds.length > 0"
+        class="thread-status-filter-action"
+        type="button"
+        @click="onMarkSeen"
+      >
+        {{ markSeenLabel }}
+        <span class="thread-status-filter-count">{{ visibleUnreadThreadIds.length }}</span>
       </button>
     </div>
 
@@ -495,7 +503,7 @@ const emit = defineEmits<{
   'reorder-project': [payload: { projectName: string; toIndex: number }]
   'export-thread': [threadId: string]
   'fork-thread': [threadId: string]
-  'mark-all-seen': []
+  'mark-all-seen': [threadIds: string[]]
 }>()
 
 type PendingProjectDrag = {
@@ -763,10 +771,29 @@ const pinnedThreads = computed(() =>
     .filter(threadMatchesVisibleFilters),
 )
 
-const unreadThreadCount = computed(() =>
-  props.groups.reduce((count, group) => (
-    count + group.threads.reduce((groupCount, thread) => groupCount + (thread.unread ? 1 : 0), 0)
-  ), 0),
+const visibleUnreadThreadIds = computed(() => {
+  const unreadThreadIds = new Set<string>()
+
+  for (const thread of pinnedThreads.value) {
+    if (thread.unread) {
+      unreadThreadIds.add(thread.id)
+    }
+  }
+
+  for (const group of filteredGroups.value) {
+    for (const thread of group.threads) {
+      if (!thread.unread || pinnedThreadIdSet.value.has(thread.id)) continue
+      unreadThreadIds.add(thread.id)
+    }
+  }
+
+  return Array.from(unreadThreadIds)
+})
+
+const markSeenLabel = computed(() =>
+  isSearchActive.value || threadStatusFilter.value !== 'all'
+    ? 'Mark matching seen'
+    : 'Mark all seen',
 )
 
 const hasVisibleThreads = computed(() => pinnedThreads.value.length > 0 || filteredGroups.value.length > 0)
@@ -797,7 +824,9 @@ const projectedDropProjectIndex = computed<number | null>(() => {
 })
 
 const layoutProjectOrder = computed<string[]>(() => {
-  const sourceGroups = isSearchActive.value ? filteredGroups.value : props.groups
+  const sourceGroups = isSearchActive.value || threadStatusFilter.value !== 'all'
+    ? filteredGroups.value
+    : props.groups
   const names = sourceGroups.map((group) => group.projectName)
   const drag = activeProjectDrag.value
   const projectedIndex = projectedDropProjectIndex.value
@@ -879,8 +908,13 @@ function onSelect(threadId: string): void {
   emit('select', threadId)
 }
 
-function onMarkAllSeen(): void {
-  emit('mark-all-seen')
+function onMarkSeen(): void {
+  const threadIds = visibleUnreadThreadIds.value
+  if (threadIds.length === 0) return
+  emit('mark-all-seen', threadIds)
+  if (threadStatusFilter.value === 'new') {
+    threadStatusFilter.value = 'all'
+  }
   isOrganizeMenuOpen.value = false
 }
 
@@ -1734,6 +1768,10 @@ onBeforeUnmount(() => {
   @apply rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] leading-none text-zinc-500;
 }
 
+.thread-status-filter-action {
+  @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800;
+}
+
 .organize-menu-wrap {
   @apply relative;
 }
@@ -2015,17 +2053,6 @@ onBeforeUnmount(() => {
 
 .thread-status-indicator[data-state='awaiting-response'] {
   @apply bg-sky-500;
-}
-
-.thread-row:hover .thread-status-indicator[data-state='unread'],
-.thread-row:hover .thread-status-indicator[data-state='working'],
-.thread-row:hover .thread-status-indicator[data-state='awaiting-approval'],
-.thread-row:hover .thread-status-indicator[data-state='awaiting-response'],
-.thread-row:focus-within .thread-status-indicator[data-state='unread'],
-.thread-row:focus-within .thread-status-indicator[data-state='working'],
-.thread-row:focus-within .thread-status-indicator[data-state='awaiting-approval'],
-.thread-row:focus-within .thread-status-indicator[data-state='awaiting-response'] {
-  @apply opacity-0;
 }
 
 .rename-thread-overlay {

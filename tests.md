@@ -123,29 +123,58 @@ This file tracks manual regression and feature verification steps.
 6. Wait for thread A to finish without selecting it again.
 7. Confirm thread A changes from the spinner to a blue unread dot after completion.
 8. Select thread A and confirm the blue dot clears after the thread is opened.
-9. Let at least two threads show blue unread dots, open the `Threads` organize menu, and click `Mark all seen`.
+9. Let at least two threads show blue unread dots, leave the thread list on `All`, and click `Mark all seen` from the filter row.
 10. Confirm all blue unread dots clear immediately while any still-running thread keeps its spinner.
-11. Use the new `All / Running / New` status filter row under `Threads` and switch to `Running`.
-12. Confirm only currently running threads remain visible in both project view and chronological view.
-13. Switch to `New` and confirm only blue-dotted threads remain visible.
-14. Combine a search query with `Running` or `New` and confirm the filter applies within the current search results instead of ignoring search.
-15. Hover a thread status indicator on desktop and confirm it exposes `Running` or `New since opened` as the status meaning.
-16. Reload the web page again without generating any new thread activity.
-17. Confirm thread A and the other historical threads still render without a blue dot after the reload.
+11. Generate or keep at least one blue unread thread, switch the status filter row under `Threads` to `New`, and confirm only blue-dotted threads remain visible.
+12. Click `Mark matching seen` while the `New` filter is active.
+13. Confirm the visible blue dots clear and the filter automatically returns to `All` so the thread list is not left empty.
+14. Switch the status filter to `Running` and confirm only currently running threads remain visible in both project view and chronological view.
+15. Combine a search query with `Running` or `New` and confirm the status filter applies within the current search results instead of ignoring search.
+16. With any non-`All` status filter selected, click `Show all` and confirm the full thread list returns immediately.
+17. Hover a thread status indicator on desktop and confirm it exposes `Running` or `New since opened` as the status meaning while the indicator itself remains visible.
+18. Reload the web page again without generating any new thread activity.
+19. Confirm thread A and the other historical threads still render without a blue dot after the reload.
 
 #### Expected Results
 - Historical completed threads are treated as already seen when the page first opens.
 - Only threads that produce new output during the current web page session gain a blue unread dot.
 - Running threads continue to show the spinner while work is in progress.
 - Opening a blue-dotted thread clears that blue dot.
-- `Mark all seen` clears all current blue dots in one action without affecting running-thread spinners.
+- The filter-row clear action respects the currently visible scope, using `Mark all seen` for the full list and `Mark matching seen` for filtered subsets.
+- Clearing unread dots from the `New` filter returns the list to `All` automatically so the sidebar does not get stuck on an empty filter.
 - The `All / Running / New` filter row narrows the thread list consistently in both project and chronological views.
 - Search and status filters compose correctly instead of overriding each other.
-- Thread status indicators expose a clear semantic label for hover/accessibility.
+- `Show all` provides an obvious way to reset the status filter without reopening any menu.
+- Thread status indicators expose a clear semantic label for hover/accessibility and stay visible while hovering the row actions.
 - Reloading the page resets the unread baseline so stale historical dots do not accumulate across sessions.
 
 #### Rollback/Cleanup
 - Wait for any test prompt to finish or interrupt it if it should not keep running.
+
+### Feature: Zoomed desktop sidebar stays in desktop mode
+
+#### Prerequisites
+- App is running from this repository in a desktop browser such as Edge or Chrome.
+- The browser window can be zoomed to at least `125%` and `150%`.
+
+#### Steps
+1. Open the web UI on a desktop browser with a mouse or trackpad.
+2. Confirm the sidebar renders in desktop mode with the resizable left pane instead of a mobile drawer overlay.
+3. Increase browser zoom to `125%`, then `150%`.
+4. Confirm the sidebar remains in desktop mode and does not switch to the mobile slide-over drawer just because the viewport becomes visually narrower.
+5. Open `Settings` from the sidebar while still zoomed in.
+6. Confirm the settings panel keeps a visible header and close button, and its own contents can scroll vertically without pushing the sidebar footer out of view.
+7. Reduce the browser width further while staying on desktop hardware and confirm the layout still behaves as a desktop sidebar until the viewport is genuinely narrow enough for the responsive breakpoint.
+8. On an actual phone-sized or emulated touch viewport, open the sidebar and confirm the mobile drawer still uses the wider slide-over width comfortably.
+
+#### Expected Results
+- Desktop browsers keep the desktop sidebar layout during ordinary browser zoom changes.
+- The mobile drawer mode is reserved for genuinely narrow or coarse-pointer layouts instead of desktop zoom alone.
+- The zoomed-in settings panel remains operable because its header stays reachable and its body scrolls independently.
+- The mobile drawer remains comfortably wide on touch layouts instead of feeling cramped.
+
+#### Rollback/Cleanup
+- Return browser zoom to the preferred default level after testing.
 
 ### Feature: Telegram bot token stored in dedicated global file
 

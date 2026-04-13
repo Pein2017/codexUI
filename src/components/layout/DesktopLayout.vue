@@ -138,7 +138,7 @@ function onResizeHandleMouseDown(event: MouseEvent): void {
 }
 
 .mobile-drawer {
-  @apply absolute top-0 left-0 bottom-0 w-[85vw] max-w-80 bg-slate-100 overflow-hidden shadow-2xl;
+  @apply absolute top-0 left-0 bottom-0 w-[min(92vw,28rem)] bg-slate-100 overflow-hidden shadow-2xl;
 }
 
 .drawer-enter-active,

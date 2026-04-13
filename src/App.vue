@@ -64,7 +64,7 @@
             @browse-thread-files="onBrowseThreadFiles"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
-            @mark-all-seen="markAllThreadsAsRead"
+            @mark-all-seen="markThreadsAsRead"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @export-thread="onExportThread" />
         </div>
@@ -767,7 +767,7 @@ const {
   removeProject,
   reorderProject,
   pinProjectToTop,
-  markAllThreadsAsRead,
+  markThreadsAsRead,
   compactSelectedThread,
   startPolling,
   stopPolling,

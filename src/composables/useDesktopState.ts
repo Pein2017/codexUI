@@ -1832,26 +1832,56 @@ export function useDesktopState() {
     applyThreadFlags()
   }
 
-  function markAllThreadsAsRead(): void {
-    const threads = flattenThreads(sourceGroups.value)
-    if (threads.length === 0) return
+  function markThreadsAsRead(threadIds: string[]): void {
+    if (!Array.isArray(threadIds) || threadIds.length === 0) return
 
+    const threadById = new Map(flattenThreads(sourceGroups.value).map((thread) => [thread.id, thread]))
     let changedSeenState = false
-    const nextSeenByThreadId = { ...seenUpdatedAtByThreadId.value }
-    for (const thread of threads) {
-      if (!thread.id) continue
-      if (nextSeenByThreadId[thread.id] === thread.updatedAtIso) continue
-      nextSeenByThreadId[thread.id] = thread.updatedAtIso
-      changedSeenState = true
+    let nextSeenByThreadId = seenUpdatedAtByThreadId.value
+    let nextPendingSeenSyncByThreadId = pendingSeenSyncByThreadId.value
+    let nextEventUnreadByThreadId = eventUnreadByThreadId.value
+
+    for (const threadId of threadIds) {
+      const thread = threadById.get(threadId)
+      if (!thread) continue
+
+      if (nextSeenByThreadId[threadId] !== thread.updatedAtIso) {
+        if (!changedSeenState) {
+          nextSeenByThreadId = { ...nextSeenByThreadId }
+        }
+        nextSeenByThreadId[threadId] = thread.updatedAtIso
+        changedSeenState = true
+      }
+
+      if (nextPendingSeenSyncByThreadId[threadId]) {
+        if (nextPendingSeenSyncByThreadId === pendingSeenSyncByThreadId.value) {
+          nextPendingSeenSyncByThreadId = { ...nextPendingSeenSyncByThreadId }
+        }
+        delete nextPendingSeenSyncByThreadId[threadId]
+      }
+
+      if (nextEventUnreadByThreadId[threadId]) {
+        if (nextEventUnreadByThreadId === eventUnreadByThreadId.value) {
+          nextEventUnreadByThreadId = { ...nextEventUnreadByThreadId }
+        }
+        delete nextEventUnreadByThreadId[threadId]
+      }
     }
-    if (changedSeenState) {
+
+    if (nextSeenByThreadId !== seenUpdatedAtByThreadId.value) {
       seenUpdatedAtByThreadId.value = nextSeenByThreadId
     }
-
-    if (Object.keys(eventUnreadByThreadId.value).length > 0) {
-      eventUnreadByThreadId.value = {}
+    if (nextPendingSeenSyncByThreadId !== pendingSeenSyncByThreadId.value) {
+      pendingSeenSyncByThreadId.value = nextPendingSeenSyncByThreadId
+    }
+    if (nextEventUnreadByThreadId !== eventUnreadByThreadId.value) {
+      eventUnreadByThreadId.value = nextEventUnreadByThreadId
     }
     applyThreadFlags()
+  }
+
+  function markAllThreadsAsRead(): void {
+    markThreadsAsRead(flattenThreads(sourceGroups.value).map((thread) => thread.id))
   }
 
   function setTurnSummaryForThread(threadId: string, summary: TurnSummaryState | null): void {
@@ -4902,6 +4932,7 @@ export function useDesktopState() {
     removeProject,
     reorderProject,
     pinProjectToTop,
+    markThreadsAsRead,
     markAllThreadsAsRead,
     compactSelectedThread,
     startPolling,

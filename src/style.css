@@ -226,6 +226,10 @@
   @apply bg-zinc-900 text-zinc-400;
 }
 
+:root.dark .thread-status-filter-action {
+  @apply text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100;
+}
+
 :root.dark .thread-row {
   @apply hover:bg-zinc-800;
 }
