@@ -44,6 +44,7 @@ import type {
   UiReviewResult,
   UiReviewScope,
   UiReviewSnapshot,
+  UiReviewWorktreeTarget,
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
@@ -628,10 +629,27 @@ function normalizeReviewSnapshot(payload: unknown): UiReviewSnapshot {
   const summaryRecord = asRecord(data?.summary)
   const scope = readString(data?.scope) === 'baseBranch' ? 'baseBranch' : 'workspace'
   const workspaceView = readString(data?.workspaceView) === 'staged' ? 'staged' : 'unstaged'
+  const worktreeTargets: UiReviewWorktreeTarget[] = Array.isArray(data?.worktreeTargets)
+    ? data.worktreeTargets
+      .map((entry) => {
+        const record = asRecord(entry)
+        const cwd = normalizePathForUi(readString(record?.cwd) ?? '')
+        if (!cwd) return null
+        const label = readString(record?.label) ?? ''
+        const branch = readString(record?.branch)
+        return {
+          cwd,
+          label: label || branch || cwd.split('/').filter(Boolean).at(-1) || cwd,
+          branch,
+          isCurrent: readBoolean(record?.isCurrent) ?? false,
+        } satisfies UiReviewWorktreeTarget
+      })
+      .filter((entry): entry is UiReviewWorktreeTarget => entry !== null)
+    : []
 
   return {
-    cwd: readString(data?.cwd) ?? '',
-    gitRoot: readString(data?.gitRoot),
+    cwd: normalizePathForUi(readString(data?.cwd) ?? ''),
+    gitRoot: normalizePathForUi(readString(data?.gitRoot) ?? '') || null,
     isGitRepo: readBoolean(data?.isGitRepo) ?? false,
     scope,
     workspaceView,
@@ -649,6 +667,7 @@ function normalizeReviewSnapshot(payload: unknown): UiReviewSnapshot {
       addedLineCount: readNumber(summaryRecord?.addedLineCount) ?? 0,
       removedLineCount: readNumber(summaryRecord?.removedLineCount) ?? 0,
     },
+    worktreeTargets,
     files: Array.isArray(data?.files)
       ? data.files
         .map((entry) => normalizeReviewFile(entry))

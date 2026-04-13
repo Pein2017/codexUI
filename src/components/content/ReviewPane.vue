@@ -37,6 +37,24 @@
       </div>
 
       <div class="review-pane-toolbar-controls">
+        <div v-if="worktreeTargets.length > 1" class="review-pane-control-cluster">
+          <span class="review-pane-control-label">Target</span>
+          <label class="review-pane-branch-select-wrap">
+            <select
+              v-model="selectedTargetCwd"
+              class="review-pane-branch-select"
+            >
+              <option
+                v-for="target in worktreeTargets"
+                :key="target.cwd"
+                :value="target.cwd"
+              >
+                {{ formatWorktreeTargetOption(target) }}
+              </option>
+            </select>
+          </label>
+        </div>
+
         <div class="review-pane-control-cluster">
           <span class="review-pane-control-label">Compare</span>
           <div class="review-pane-segmented">
@@ -124,6 +142,12 @@
       <span>{{ snapshot.summary.fileCount }} files</span>
       <span class="review-pane-summary-pill review-pane-summary-pill-add">+{{ snapshot.summary.addedLineCount }}</span>
       <span class="review-pane-summary-pill review-pane-summary-pill-remove">-{{ snapshot.summary.removedLineCount }}</span>
+      <span
+        v-if="selectedWorktreeTarget"
+        :title="selectedWorktreeTarget.cwd"
+      >
+        {{ selectedWorktreeTarget.label }}
+      </span>
       <span v-if="snapshot.headBranch">{{ snapshot.headBranch }}</span>
       <span v-if="activeScope === 'baseBranch' && snapshot.baseBranch">vs {{ snapshot.baseBranch }}</span>
     </div>
@@ -412,6 +436,7 @@ import type {
   UiReviewScope,
   UiReviewSnapshot,
   UiReviewTab,
+  UiReviewWorktreeTarget,
   UiReviewWorkspaceView,
   UiReviewFile,
   UiReviewHunk,
@@ -434,8 +459,10 @@ const activeTab = ref<UiReviewTab>('changes')
 const activeScope = ref<UiReviewScope>('workspace')
 const workspaceView = ref<UiReviewWorkspaceView>('unstaged')
 const snapshot = ref<UiReviewSnapshot | null>(null)
+const selectedTargetCwd = ref('')
 const selectedBaseBranch = ref('')
 const isSyncingBaseBranch = ref(false)
+const isSyncingTarget = ref(false)
 const selectedFileId = ref('')
 const selectedHunkId = ref('')
 const isFileSheetOpen = ref(false)
@@ -451,11 +478,6 @@ const pendingReviewKey = ref('')
 const hunkRefs = new Map<string, HTMLElement>()
 let stopNotifications: (() => void) | null = null
 let stopResizeTracking: (() => void) | null = null
-
-const reviewTabs = [
-  { value: 'changes' as const, label: 'Changes' },
-  { value: 'findings' as const, label: 'Findings' },
-]
 
 type ReviewTreeFolderNode = {
   kind: 'folder'
@@ -495,6 +517,25 @@ const reviewKey = computed(() => `${activeScope.value}:${workspaceView.value}`)
 const currentReviewResult = computed(() => reviewResultsByKey.value[reviewKey.value] ?? null)
 const selectedFile = computed(() => snapshot.value?.files.find((file) => file.id === selectedFileId.value) ?? snapshot.value?.files[0] ?? null)
 const folderExpansionState = ref<Record<string, boolean>>({})
+const worktreeTargets = computed<UiReviewWorktreeTarget[]>(() => snapshot.value?.worktreeTargets ?? [])
+const activeReviewCwd = computed(() => selectedTargetCwd.value.trim() || props.cwd.trim())
+const selectedWorktreeTarget = computed<UiReviewWorktreeTarget | null>(() => {
+  const comparableSelected = normalizeComparablePath(activeReviewCwd.value)
+  return worktreeTargets.value.find((target) => normalizeComparablePath(target.cwd) === comparableSelected) ?? null
+})
+const isViewingAlternateWorktree = computed(() => {
+  const current = normalizeComparablePath(props.cwd)
+  const selected = normalizeComparablePath(activeReviewCwd.value)
+  return Boolean(current && selected && current !== selected)
+})
+const reviewTabs = computed(() => (
+  isViewingAlternateWorktree.value
+    ? [{ value: 'changes' as const, label: 'Changes' }]
+    : [
+        { value: 'changes' as const, label: 'Changes' },
+        { value: 'findings' as const, label: 'Findings' },
+      ]
+))
 
 const headerTitle = computed(() => {
   if (!snapshot.value?.isGitRepo) return 'Repository review'
@@ -506,9 +547,10 @@ const headerTitle = computed(() => {
 
 const canRunReview = computed(() => (
   props.threadId.trim().length > 0
-  && props.cwd.trim().length > 0
+  && activeReviewCwd.value.length > 0
   && snapshot.value?.isGitRepo === true
   && !props.isThreadInProgress
+  && !isViewingAlternateWorktree.value
   && !(activeScope.value === 'baseBranch' && !snapshot.value?.baseBranch)
 ))
 
@@ -516,6 +558,7 @@ const showBulkActions = computed(() => (
   activeScope.value === 'workspace'
   && snapshot.value?.isGitRepo === true
   && snapshot.value.files.length > 0
+  && !isViewingAlternateWorktree.value
 ))
 
 const showRowActions = computed(() => showBulkActions.value && !isApplyingAction.value)
@@ -554,6 +597,11 @@ const reviewBannerText = computed(() => (
   reviewError.value
   || snapshotError.value
   || reviewStatusLabel.value
+  || (
+    isViewingAlternateWorktree.value
+      ? 'Viewing a linked worktree in read-only mode. Switch this thread into that worktree to stage, revert, or run Codex review.'
+      : ''
+  )
 ))
 const reviewBannerIsError = computed(() => Boolean(reviewError.value || snapshotError.value))
 const REVIEW_FILE_LIST_WIDTH_KEY = 'codex-web-local.review-pane-file-list-width.v1'
@@ -577,6 +625,21 @@ const fileTreeFolderIdsByFileId = computed(() => fileTreeData.value.folderIdsByF
 function clampFileListWidth(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_FILE_LIST_WIDTH
   return Math.min(MAX_FILE_LIST_WIDTH, Math.max(MIN_FILE_LIST_WIDTH, Math.round(value)))
+}
+
+function normalizeComparablePath(value: string): string {
+  return value.trim().replace(/\\/gu, '/').replace(/\/+$/u, '')
+}
+
+function formatWorktreeTargetOption(target: UiReviewWorktreeTarget): string {
+  const pathLeaf = target.cwd.split('/').filter(Boolean).at(-1) ?? target.cwd
+  if (target.isCurrent) {
+    return `${target.label} · ${pathLeaf}`
+  }
+  if (target.branch && target.branch !== pathLeaf) {
+    return `${target.label} · ${pathLeaf}`
+  }
+  return target.label
 }
 
 function loadFileListWidth(): number {
@@ -779,17 +842,27 @@ function extractNotificationThreadId(notification: RpcNotification): string {
 }
 
 async function loadSnapshot(): Promise<void> {
-  if (!props.cwd.trim()) return
+  if (!activeReviewCwd.value) return
   isLoadingSnapshot.value = true
   snapshotError.value = ''
   try {
     const desiredBaseBranch = activeScope.value === 'baseBranch' ? selectedBaseBranch.value.trim() : ''
     const nextSnapshot = await getReviewSnapshot(
-      props.cwd,
+      activeReviewCwd.value,
       activeScope.value,
       workspaceView.value,
       desiredBaseBranch || null,
     )
+    const comparableRequestedCwd = normalizeComparablePath(activeReviewCwd.value)
+    const normalizedTarget = nextSnapshot.worktreeTargets.find((target) => (
+      normalizeComparablePath(target.cwd) === comparableRequestedCwd
+    ))?.cwd
+      ?? nextSnapshot.worktreeTargets.find((target) => target.isCurrent)?.cwd
+      ?? nextSnapshot.cwd
+    if (normalizeComparablePath(selectedTargetCwd.value) !== normalizeComparablePath(normalizedTarget)) {
+      isSyncingTarget.value = true
+      selectedTargetCwd.value = normalizedTarget
+    }
     if (nextSnapshot.baseBranchOptions.length > 0) {
       const normalizedBaseBranch = nextSnapshot.baseBranch ?? nextSnapshot.baseBranchOptions[0] ?? ''
       if (selectedBaseBranch.value !== normalizedBaseBranch) {
@@ -853,7 +926,7 @@ async function applyAction(action: UiReviewAction, level: 'all' | 'file' | 'hunk
   reviewError.value = ''
   try {
     const nextSnapshot = await applyReviewAction({
-      cwd: props.cwd,
+      cwd: activeReviewCwd.value,
       scope: activeScope.value,
       workspaceView: workspaceView.value,
       action,
@@ -887,11 +960,11 @@ async function applyHunkAction(action: UiReviewAction, hunk: UiReviewHunk): Prom
 }
 
 async function initializeGit(): Promise<void> {
-  if (!props.cwd.trim()) return
+  if (!activeReviewCwd.value) return
   isInitializingGit.value = true
   reviewError.value = ''
   try {
-    await initializeReviewGit(props.cwd)
+    await initializeReviewGit(activeReviewCwd.value)
     await loadSnapshot()
   } catch (error) {
     reviewError.value = error instanceof Error ? error.message : 'Failed to initialize Git'
@@ -1012,6 +1085,7 @@ function handleNotification(notification: RpcNotification): void {
 watch(
   () => [props.threadId, props.cwd] as const,
   () => {
+    selectedTargetCwd.value = ''
     selectedFileId.value = ''
     selectedHunkId.value = ''
     reviewResultsByKey.value = {}
@@ -1034,6 +1108,19 @@ watch(
   },
 )
 
+watch(selectedTargetCwd, (cwd, previous) => {
+  if (isSyncingTarget.value) {
+    isSyncingTarget.value = false
+    return
+  }
+  if (!cwd || cwd === previous) return
+  selectedFileId.value = ''
+  selectedHunkId.value = ''
+  reviewError.value = ''
+  snapshotError.value = ''
+  void loadSnapshot()
+})
+
 watch(selectedBaseBranch, (branch, previous) => {
   if (isSyncingBaseBranch.value) {
     isSyncingBaseBranch.value = false
@@ -1042,6 +1129,12 @@ watch(selectedBaseBranch, (branch, previous) => {
   if (activeScope.value !== 'baseBranch') return
   if (!branch || branch === previous) return
   void loadSnapshot()
+})
+
+watch(isViewingAlternateWorktree, (value) => {
+  if (value && activeTab.value !== 'changes') {
+    activeTab.value = 'changes'
+  }
 })
 
 watch(selectedFile, (file) => {

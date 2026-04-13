@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 
 type ReviewScope = 'workspace' | 'baseBranch'
 type ReviewWorkspaceView = 'unstaged' | 'staged'
@@ -43,6 +43,13 @@ type ReviewSnapshotFile = {
   hunks: ReviewSnapshotHunk[]
 }
 
+type ReviewWorktreeTarget = {
+  cwd: string
+  label: string
+  branch: string | null
+  isCurrent: boolean
+}
+
 type ReviewSnapshot = {
   cwd: string
   gitRoot: string | null
@@ -59,6 +66,7 @@ type ReviewSnapshot = {
     addedLineCount: number
     removedLineCount: number
   }
+  worktreeTargets: ReviewWorktreeTarget[]
   files: ReviewSnapshotFile[]
 }
 
@@ -273,6 +281,100 @@ async function resolveBaseBranch(repoRoot: string, requestedBaseBranch = ''): Pr
 async function detectHeadBranch(repoRoot: string): Promise<string | null> {
   const result = await runCommandResult('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repoRoot })
   return result.code === 0 && result.stdout !== 'HEAD' ? result.stdout : null
+}
+
+function normalizeBranchName(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('refs/heads/')) {
+    return trimmed.slice('refs/heads/'.length) || null
+  }
+  if (trimmed.startsWith('refs/remotes/')) {
+    return trimmed.slice('refs/remotes/'.length) || null
+  }
+  return trimmed
+}
+
+function normalizeComparablePath(value: string): string {
+  return normalizeInputCwd(value).replace(/\\/gu, '/').replace(/\/+$/u, '')
+}
+
+function buildWorktreeTargetLabel(cwd: string, branch: string | null, isCurrent: boolean): string {
+  const branchLabel = branch?.trim() ?? ''
+  if (isCurrent && branchLabel) return `${branchLabel} (Current)`
+  if (isCurrent) return `${basename(cwd) || cwd} (Current)`
+  if (branchLabel) return branchLabel
+  return basename(cwd) || cwd
+}
+
+async function listReviewWorktreeTargets(
+  repoRoot: string,
+  currentGitRoot: string,
+): Promise<ReviewWorktreeTarget[]> {
+  const result = await runCommandResult('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot })
+  if (result.code !== 0) {
+    const fallbackCurrent = normalizeInputCwd(currentGitRoot)
+    return [{
+      cwd: fallbackCurrent,
+      label: buildWorktreeTargetLabel(fallbackCurrent, null, true),
+      branch: null,
+      isCurrent: true,
+    }]
+  }
+
+  const currentComparable = normalizeComparablePath(currentGitRoot)
+  const entries: ReviewWorktreeTarget[] = []
+  let currentPath = ''
+  let currentBranch: string | null = null
+
+  const flushEntry = () => {
+    const cwd = currentPath.trim()
+    if (!cwd) return
+    const normalizedCwd = normalizeInputCwd(cwd)
+    const isCurrent = normalizeComparablePath(normalizedCwd) === currentComparable
+    entries.push({
+      cwd: normalizedCwd,
+      label: buildWorktreeTargetLabel(normalizedCwd, currentBranch, isCurrent),
+      branch: currentBranch,
+      isCurrent,
+    })
+    currentPath = ''
+    currentBranch = null
+  }
+
+  for (const rawLine of result.stdout.split(/\r?\n/u)) {
+    const line = rawLine.trim()
+    if (!line) {
+      flushEntry()
+      continue
+    }
+    if (line.startsWith('worktree ')) {
+      flushEntry()
+      currentPath = line.slice('worktree '.length).trim()
+      continue
+    }
+    if (line.startsWith('branch ')) {
+      currentBranch = normalizeBranchName(line.slice('branch '.length))
+    }
+  }
+  flushEntry()
+
+  const deduped = new Map<string, ReviewWorktreeTarget>()
+  for (const entry of entries) {
+    const key = normalizeComparablePath(entry.cwd)
+    if (!deduped.has(key)) {
+      deduped.set(key, entry)
+    }
+  }
+
+  const targets = Array.from(deduped.values())
+  targets.sort((left, right) => {
+    if (left.isCurrent !== right.isCurrent) {
+      return left.isCurrent ? -1 : 1
+    }
+    return left.label.localeCompare(right.label, undefined, { sensitivity: 'base', numeric: true })
+  })
+  return targets
 }
 
 function parseUntrackedPaths(statusOutput: string): string[] {
@@ -639,14 +741,16 @@ async function buildReviewSnapshot(
         addedLineCount: 0,
         removedLineCount: 0,
       },
+      worktreeTargets: [],
       files: [],
     }
   }
 
-  const [baseBranch, baseBranchOptions, headBranch] = await Promise.all([
+  const [baseBranch, baseBranchOptions, headBranch, worktreeTargets] = await Promise.all([
     resolveBaseBranch(gitRoot, requestedBaseBranch),
     listBaseBranchOptions(gitRoot),
     detectHeadBranch(gitRoot),
+    listReviewWorktreeTargets(gitRoot, gitRoot),
   ])
 
   let diffText = ''
@@ -679,6 +783,7 @@ async function buildReviewSnapshot(
       addedLineCount: files.reduce((sum, file) => sum + file.addedLineCount, 0),
       removedLineCount: files.reduce((sum, file) => sum + file.removedLineCount, 0),
     },
+    worktreeTargets,
     files,
   }
 }

@@ -164,6 +164,13 @@ export type UiReviewFile = {
   hunks: UiReviewHunk[]
 }
 
+export type UiReviewWorktreeTarget = {
+  cwd: string
+  label: string
+  branch: string | null
+  isCurrent: boolean
+}
+
 export type UiReviewSnapshot = {
   cwd: string
   gitRoot: string | null
@@ -180,6 +187,7 @@ export type UiReviewSnapshot = {
     addedLineCount: number
     removedLineCount: number
   }
+  worktreeTargets: UiReviewWorktreeTarget[]
   files: UiReviewFile[]
 }
 
