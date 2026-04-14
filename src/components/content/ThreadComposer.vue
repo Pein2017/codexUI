@@ -263,17 +263,6 @@
             </div>
           </div>
 
-          <button
-            class="thread-composer-command-button thread-composer-command-button--mention"
-            type="button"
-            :disabled="isInteractionDisabled"
-            aria-label="Mention a file or folder from the workspace"
-            title="Mention a file or folder from the workspace"
-            @click="openFileMentionPicker"
-          >
-            @
-          </button>
-
           <ComposerDropdown
             v-if="!isInlineEdit"
             ref="modelDropdownRef"
@@ -1908,43 +1897,6 @@ function getFileMentionMatch(text: string, cursor: number): { startIndex: number
   }
 }
 
-function openFileMentionPicker(): void {
-  if (isInteractionDisabled.value) return
-  const input = inputRef.value
-  if (!input) return
-  isAttachMenuOpen.value = false
-  isSlashMenuOpen.value = false
-  menuMode.value = null
-
-  const selectionStart = input.selectionStart ?? draft.value.length
-  const selectionEnd = input.selectionEnd ?? selectionStart
-  const existingMention = getFileMentionMatch(draft.value, selectionStart)
-  if (existingMention) {
-    mentionStartIndex.value = existingMention.startIndex
-    mentionQuery.value = existingMention.query
-    isFileMentionOpen.value = true
-    void queueFileMentionSearch()
-    nextTick(() => input.focus())
-    return
-  }
-  const before = draft.value.slice(0, selectionStart)
-  const after = draft.value.slice(selectionEnd)
-  const previousChar = before.slice(-1)
-  const needsLeadingSpace = before.length > 0 && !/\s/.test(previousChar)
-  const insertion = `${needsLeadingSpace ? ' ' : ''}@`
-  const nextCursor = before.length + insertion.length
-
-  draft.value = `${before}${insertion}${after}`
-
-  nextTick(() => {
-    const activeInput = inputRef.value
-    if (!activeInput) return
-    activeInput.focus()
-    activeInput.setSelectionRange(nextCursor, nextCursor)
-    updateFileMentionState()
-  })
-}
-
 function isImeConfirmEnter(event: KeyboardEvent): boolean {
   if (event.key !== 'Enter') {
     return false
@@ -2715,10 +2667,6 @@ watch(
   @apply inline-flex h-7 shrink-0 items-center border-0 bg-transparent p-0 text-sm leading-none text-zinc-500 transition hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-400;
 }
 
-.thread-composer-command-button--mention {
-  @apply h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 p-0 font-semibold text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900;
-}
-
 .thread-composer-actions {
   @apply ml-auto flex min-w-0 items-center gap-2;
 }
@@ -2844,10 +2792,6 @@ watch(
 
   .thread-composer-command-button {
     @apply inline-flex h-7 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 text-[12px] font-medium text-zinc-700;
-  }
-
-  .thread-composer-command-button--mention {
-    @apply h-8 w-8 px-0 text-[15px];
   }
 
   .thread-composer-context-badge {

@@ -790,6 +790,130 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Revert the scroll-preservation change in `src/components/content/ThreadConversation.vue` if manual scroll locking needs to be removed.
 
+### Feature: Compact live plan and live status while response text is streaming
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can produce a response that shows a live `Plan` card before assistant text starts streaming.
+
+#### Steps
+1. Start a prompt that produces a visible live `Plan` card and live runtime status before any assistant text appears.
+2. Confirm the live `Plan` already renders as a compact inline summary row with a short preview and a top-right chevron toggle.
+3. Click the chevron toggle and confirm the plan expands into an indented scrollable panel instead of a large standalone card.
+4. Click the chevron again and confirm the plan collapses back into its inline summary row.
+5. While the turn is still planning or calling tools, confirm the live status card still shows full details.
+6. Wait until assistant text begins streaming into the conversation body.
+7. If the live `Writing response` phase has no summary, details, background agents, reasoning text, or errors, confirm no large bottom live status card is rendered during plain text streaming.
+8. Verify the streamed assistant text now occupies more visible vertical space than before.
+9. Trigger a live phase that does have extra runtime detail and confirm the live status card still appears for that richer phase.
+10. If a live phase with extra detail is shown, click `Minimize` on the expanded live status card and confirm it collapses again.
+11. Start another turn and confirm the compact or expanded state resets for the new runtime.
+
+#### Expected Results
+- Live plans stay compact by default, even before answer text starts streaming, and read like inline process annotations instead of standalone cards.
+- Expanded plan content is scrollable inside an indented details region instead of permanently taking over a large vertical region.
+- Before assistant text appears, live runtime details remain fully visible.
+- During plain `Writing response` streaming with no additional live detail, no standalone live status card is shown.
+- Live status cards still appear for phases that actually carry structured runtime detail.
+- The assistant's streaming text has a noticeably larger viewport region while the turn is active.
+- Expanded state does not leak into the next turn.
+
+#### Rollback/Cleanup
+- Revert the compact live-layout change in `src/components/content/ThreadConversation.vue` if the previous full-height layout is preferred.
+
+### Feature: Live tool activity is summarized inline as stage snapshots during a long turn
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can produce a long turn that includes at least two distinct runtime phases, such as `Thinking`, `Running command`, `Calling MCP tool`, `Applying changes`, or `Coordinating agents`.
+
+#### Steps
+1. Start a prompt that causes the model to think, run tools, and then stream a textual answer.
+2. While the first non-writing phase is active, confirm the bottom live status card reflects only the current phase instead of an ever-growing cumulative tool count.
+3. Wait until the phase changes at least once, for example from `Thinking` to `Running command`, or from `Running command` to `Calling MCP tool`.
+4. Confirm a compact inline stage summary row appears in the conversation flow above the current live response region, without a rounded card container.
+5. Confirm the raw command, MCP, agent-action, or file-change rows that belong to that completed stage are no longer shown separately in the main live flow.
+6. Click `Details` on the inline stage summary and confirm it expands to show the captured reasoning text, activity details, and the tool/file-change rows for that stage.
+7. Collapse the stage summary again and continue the turn until another phase completes.
+8. Confirm multiple stage summaries can accumulate during the same live turn, giving a readable timeline of the work that has happened so far.
+9. Continue until `Writing response` is active and confirm the remaining bottom live status card behaves like a lightweight current-phase indicator rather than the only place where past tool activity is visible.
+10. Let the turn complete and confirm the temporary live stage summaries disappear cleanly, without leaving broken chunks or duplicate live tool rows behind.
+
+#### Expected Results
+- Completed live runtime phases are summarized inline as compact, expandable stage rows that look like lightweight timeline annotations rather than separate cards.
+- The bottom live status card reflects the current phase instead of the entire turn's cumulative command/MCP history.
+- Raw live tool rows are replaced by stage summaries while the turn is active, reducing visual clutter in the main streaming area.
+- Expanding a stage summary reveals the corresponding reasoning/details and the underlying command, MCP, collab, or file-change entries for that phase.
+- When the turn finishes, the temporary live stage timeline clears without stale UI remnants.
+
+#### Rollback/Cleanup
+- Revert the live stage-summary changes in `src/composables/useDesktopState.ts`, `src/components/content/ThreadConversation.vue`, and `src/types/codex.ts` if the previous bottom-overlay-only interaction is preferred.
+
+### Feature: Command and tool activity render as standalone boxed runtime nodes
+
+#### Prerequisites
+- App is running from this repository.
+- A thread contains at least one shell command entry and preferably one MCP or agent-action entry, either in the main flow, inside a live stage summary, or inside a worked summary.
+
+#### Steps
+1. Open a thread that includes a command execution row and expand it.
+2. Confirm the expanded command shows a dedicated boxed panel with a small `Shell` label, the command itself, and a scrollable output region.
+3. Scroll vertically inside the command output and confirm the output scrolls within the card instead of expanding the full conversation endlessly.
+4. If the command has a long single-line output, confirm horizontal scrolling preserves terminal-style formatting instead of force-wrapping everything.
+5. Expand an MCP tool row and confirm it uses the same boxed runtime-node treatment, with its own label and scrollable output body.
+6. Expand an agent-action row and confirm it follows the same visual pattern.
+7. Expand a stage summary or worked summary and confirm each contained command/tool row still renders as its own standalone box instead of collapsing into one shared text area.
+
+#### Expected Results
+- Each command execution is visually separated into its own expandable runtime box.
+- Expanded command output is scrollable within the card and preserves monospace terminal-style layout.
+- MCP and agent-action rows follow the same overall folding and boxed-output pattern, giving the runtime UI a more unified recursive structure.
+- Nested command/tool rows inside stage summaries or worked summaries remain individually inspectable.
+
+#### Rollback/Cleanup
+- Revert the runtime-node card styling and template changes in `src/components/content/ThreadConversation.vue` if the previous flatter command-row presentation is preferred.
+
+### Feature: Background agent summaries show model and reasoning effort
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can trigger at least one `spawnAgent` / background-agent action.
+
+#### Steps
+1. Start a turn that spawns one or more background agents.
+2. Open either the current live status card or a completed stage summary that lists background agents.
+3. Inspect an individual background agent row.
+4. Confirm the row shows the agent title plus compact runtime chips for the agent model and reasoning effort.
+5. Confirm the existing status/message and diff delta indicators still appear.
+
+#### Expected Results
+- Background agent rows expose the spawned agent's model and reasoning effort without needing to open raw tool JSON.
+- The runtime chips are compact enough that they do not significantly increase the height of the agent list.
+
+#### Rollback/Cleanup
+- Revert the background-agent summary extension in `src/types/codex.ts`, `src/composables/useDesktopState.ts`, and `src/components/content/ThreadConversation.vue` if the additional runtime metadata is not wanted.
+
+### Feature: Prose with slash-separated words no longer becomes broken local file links
+
+#### Prerequisites
+- App is running from this repository.
+- A thread contains assistant text with prose like `command/MCP` or `thinking/search`, and also contains at least one real repo-like path such as `src/components/content/ThreadConversation.vue`.
+
+#### Steps
+1. Open the thread and locate prose containing a slash-separated phrase like `command/MCP`.
+2. Confirm that phrase renders as normal text instead of a clickable blue local-file link.
+3. In the same message, locate a real file path such as `src/components/content/ThreadConversation.vue`.
+4. Confirm the real file path still renders as a clickable local-file link.
+5. Click the real file path and confirm it opens the local viewer rather than returning `{\"error\":\"File not found.\"}` for a fake prose path.
+
+#### Expected Results
+- Generic prose containing one slash is not misclassified as a local file path.
+- Real repo-style paths still render as clickable local-file links.
+- The previous false-positive `File not found.` path-open behavior is eliminated for phrases like `command/MCP`.
+
+#### Rollback/Cleanup
+- Revert the `isFilePath()` heuristic change in `src/components/content/ThreadConversation.vue` if broader bare-path linking is preferred again.
+
 ### Feature: Rollback API/UI no longer requires turn index in rollback payload
 
 #### Prerequisites

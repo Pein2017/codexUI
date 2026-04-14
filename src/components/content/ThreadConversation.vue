@@ -12,13 +12,13 @@
     <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
       <template v-for="message in messages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id) && !hiddenWorkedToolIds.has(message.id) && !hiddenLiveRuntimeMessageIds.has(message.id)"
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id) && !hiddenWorkedToolIds.has(message.id) && !hiddenLiveRuntimeMessageIds.has(message.id) && !hiddenStageToolIds.has(message.id)"
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
       >
         <div v-if="isCommandMessage(message)" class="message-row" data-role="system">
-          <div class="message-stack" data-role="system">
+          <div class="message-stack cmd-card" data-role="system">
             <button
               v-if="getGroupedCommandsForLatest(message).length > 0"
               type="button"
@@ -39,7 +39,7 @@
                 <div
                   v-for="cmd in getCommandBlockForLatest(message)"
                   :key="`grouped-cmd-${cmd.id}`"
-                  class="worked-cmd-item"
+                  class="worked-cmd-item cmd-card"
                 >
                   <button
                     type="button"
@@ -62,11 +62,24 @@
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
                     <div class="cmd-output-inner">
+                      <div class="cmd-surface" data-kind="shell">
+                        <div class="cmd-surface-header">
+                          <span class="cmd-surface-kind">Shell</span>
+                          <span
+                            v-if="commandCwdPreview(cmd)"
+                            class="cmd-surface-meta"
+                            :title="cmd.commandExecution?.cwd ?? ''"
+                          >
+                            {{ commandCwdPreview(cmd) }}
+                          </span>
+                        </div>
+                        <code class="cmd-surface-command">$ {{ cmd.commandExecution?.command || '(command)' }}</code>
                       <pre
                         class="cmd-output"
                         :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                        v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
+                        v-text="commandOutputText(cmd)"
                       ></pre>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -94,11 +107,24 @@
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
                 <div class="cmd-output-inner">
+                  <div class="cmd-surface" data-kind="shell">
+                    <div class="cmd-surface-header">
+                      <span class="cmd-surface-kind">Shell</span>
+                      <span
+                        v-if="commandCwdPreview(message)"
+                        class="cmd-surface-meta"
+                        :title="message.commandExecution?.cwd ?? ''"
+                      >
+                        {{ commandCwdPreview(message) }}
+                      </span>
+                    </div>
+                    <code class="cmd-surface-command">$ {{ message.commandExecution?.command || '(command)' }}</code>
                   <pre
                     class="cmd-output"
                     :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
-                    v-text="message.commandExecution?.aggregatedOutput || '(no output)'"
+                    v-text="commandOutputText(message)"
                   ></pre>
+                  </div>
                 </div>
               </div>
             </template>
@@ -106,7 +132,7 @@
         </div>
 
         <div v-else-if="isMcpToolCallMessage(message)" class="message-row" data-role="system">
-          <div class="message-stack" data-role="system">
+          <div class="message-stack cmd-card" data-role="system">
             <button
               type="button"
               class="cmd-row"
@@ -128,18 +154,24 @@
               :class="{ 'cmd-output-visible': isMcpToolCallExpanded(message) }"
             >
               <div class="cmd-output-inner">
+                <div class="cmd-surface" data-kind="mcp">
+                  <div class="cmd-surface-header">
+                    <span class="cmd-surface-kind">MCP tool</span>
+                  </div>
+                  <code class="cmd-surface-command">{{ mcpToolCallLabel(message) }}</code>
                 <pre
                   class="cmd-output"
                   :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(message) }"
                   v-text="mcpToolCallOutput(message)"
                 ></pre>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
         <div v-else-if="isCollabToolCallMessage(message)" class="message-row" data-role="system">
-          <div class="message-stack" data-role="system">
+          <div class="message-stack cmd-card" data-role="system">
             <button
               type="button"
               class="cmd-row"
@@ -161,11 +193,17 @@
               :class="{ 'cmd-output-visible': isCollabToolCallExpanded(message) }"
             >
               <div class="cmd-output-inner">
+                <div class="cmd-surface" data-kind="agent">
+                  <div class="cmd-surface-header">
+                    <span class="cmd-surface-kind">Agent action</span>
+                  </div>
+                  <code class="cmd-surface-command">{{ collabToolCallLabel(message) }}</code>
                 <pre
                   class="cmd-output"
                   :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(message) }"
                   v-text="collabToolCallOutput(message)"
                 ></pre>
+                </div>
               </div>
             </div>
           </div>
@@ -294,7 +332,7 @@
                     <div
                       v-for="activity in getActivitiesForWorked(message)"
                       :key="`worked-cmd-${activity.id}`"
-                      class="worked-cmd-item"
+                      class="worked-cmd-item cmd-card"
                     >
                       <template v-if="isCommandMessage(activity)">
                         <button
@@ -318,11 +356,24 @@
                           :class="{ 'cmd-output-visible': isCommandExpanded(activity) }"
                         >
                           <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="shell">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">Shell</span>
+                                <span
+                                  v-if="commandCwdPreview(activity)"
+                                  class="cmd-surface-meta"
+                                  :title="activity.commandExecution?.cwd ?? ''"
+                                >
+                                  {{ commandCwdPreview(activity) }}
+                                </span>
+                              </div>
+                              <code class="cmd-surface-command">$ {{ activity.commandExecution?.command || '(command)' }}</code>
                             <pre
                               class="cmd-output"
                               :class="{ 'cmd-output-condensed': isCommandOutputCondensed(activity) }"
-                              v-text="activity.commandExecution?.aggregatedOutput || '(no output)'"
+                              v-text="commandOutputText(activity)"
                             ></pre>
+                            </div>
                           </div>
                         </div>
                       </template>
@@ -348,11 +399,17 @@
                           :class="{ 'cmd-output-visible': isMcpToolCallExpanded(activity) }"
                         >
                           <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="mcp">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">MCP tool</span>
+                              </div>
+                              <code class="cmd-surface-command">{{ mcpToolCallLabel(activity) }}</code>
                             <pre
                               class="cmd-output"
                               :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(activity) }"
                               v-text="mcpToolCallOutput(activity)"
                             ></pre>
+                            </div>
                           </div>
                         </div>
                       </template>
@@ -378,39 +435,358 @@
                           :class="{ 'cmd-output-visible': isCollabToolCallExpanded(activity) }"
                         >
                           <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="agent">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">Agent action</span>
+                              </div>
+                              <code class="cmd-surface-command">{{ collabToolCallLabel(activity) }}</code>
                             <pre
                               class="cmd-output"
                               :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(activity) }"
                               v-text="collabToolCallOutput(activity)"
                             ></pre>
+                            </div>
                           </div>
                         </div>
                       </template>
                     </div>
                   </div>
                 </div>
-                <div v-else-if="isPlanMessage(message)" class="plan-card" :data-streaming="message.messageType === 'plan.live'">
-                  <div class="plan-card-header">
-                    <p class="plan-card-title">Plan</p>
-                    <span v-if="message.messageType === 'plan.live'" class="plan-card-badge">Updating</span>
-                  </div>
-                  <div
-                    v-if="readPlanExplanation(message)"
-                    class="plan-card-explanation plan-card-markdown"
-                    v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
-                  />
-                  <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
-                    <li
-                      v-for="(step, stepIndex) in readPlanSteps(message)"
-                      :key="`${message.id}:plan-step:${stepIndex}`"
-                      class="plan-step-item"
-                      :data-status="step.status"
+                <div
+                  v-else-if="isLiveStageSummaryMessage(message)"
+                  class="stage-summary-block"
+                  :data-status="message.liveStageSummary?.updatedAtMs ? 'tracked' : 'idle'"
+                >
+                  <button type="button" class="stage-summary-header" @click="toggleLiveStageSummary(message)">
+                    <span class="worked-chevron" :class="{ 'worked-chevron-open': isLiveStageSummaryExpanded(message) }">▶</span>
+                    <div class="stage-summary-copy">
+                      <p class="stage-summary-label">
+                        {{ liveStageSummaryLabel(message) }}
+                        <span v-if="liveStageSummaryMeta(message)" class="stage-summary-meta-inline">
+                          {{ liveStageSummaryMeta(message) }}
+                        </span>
+                      </p>
+                    </div>
+                  </button>
+                  <div v-if="isLiveStageSummaryExpanded(message)" class="stage-summary-details">
+                    <div
+                      v-if="liveStageSummaryReasoning(message)"
+                      class="reasoning-card-markdown stage-summary-reasoning"
+                      v-html="renderMarkdownBlocksAsHtml(liveStageSummaryReasoning(message))"
+                    />
+                    <ul v-if="liveStageSummaryDetails(message).length > 0" class="live-overlay-activity-list stage-summary-detail-list">
+                      <li
+                        v-for="(detail, detailIndex) in liveStageSummaryDetails(message)"
+                        :key="`stage-detail:${message.id}:${detailIndex}:${detail}`"
+                        class="live-overlay-activity-item"
+                      >
+                        {{ detail }}
+                      </li>
+                    </ul>
+                    <section v-if="liveStageSummaryBackgroundAgents(message).length > 0" class="live-overlay-agents stage-summary-agents">
+                      <div class="live-overlay-agents-header">
+                        <span class="live-overlay-agents-title">
+                          {{ liveStageSummaryBackgroundAgents(message).length }} background agents
+                        </span>
+                      </div>
+                      <ul class="live-overlay-agents-list">
+                        <li
+                          v-for="agent in liveStageSummaryBackgroundAgents(message)"
+                          :key="`stage-agent:${message.id}:${agent.threadId}`"
+                          class="live-overlay-agent-row"
+                        >
+                          <div class="live-overlay-agent-copy">
+                            <span class="live-overlay-agent-name">{{ agent.title }}</span>
+                            <div
+                              v-if="backgroundAgentRuntimeParts(agent).length > 0"
+                              class="live-overlay-agent-runtime"
+                            >
+                              <span
+                                v-for="part in backgroundAgentRuntimeParts(agent)"
+                                :key="`stage-agent-runtime:${message.id}:${agent.threadId}:${part}`"
+                                class="live-overlay-agent-runtime-chip"
+                              >
+                                {{ part }}
+                              </span>
+                            </div>
+                            <span
+                              v-if="backgroundAgentStatusDetail(agent)"
+                              class="live-overlay-agent-meta"
+                            >
+                              {{ backgroundAgentStatusDetail(agent) }}
+                            </span>
+                          </div>
+                          <div class="live-overlay-agent-actions">
+                            <span
+                              v-if="backgroundAgentDeltaParts(agent).length > 0"
+                              class="live-overlay-agent-delta"
+                            >
+                              <span
+                                v-for="part in backgroundAgentDeltaParts(agent)"
+                                :key="`stage-agent-delta:${message.id}:${agent.threadId}:${part.tone}:${part.label}`"
+                                class="file-change-signed-count"
+                                :data-tone="part.tone"
+                              >
+                                {{ part.label }}
+                              </span>
+                            </span>
+                            <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
+                            <button
+                              type="button"
+                              class="live-overlay-agent-open"
+                              @click="openBackgroundAgentThread(agent.threadId)"
+                            >
+                              Open
+                            </button>
+                          </div>
+                        </li>
+                      </ul>
+                    </section>
+                    <div
+                      v-for="activity in getActivitiesForStage(message)"
+                      :key="`stage-activity:${message.id}:${activity.id}`"
+                      class="worked-cmd-item cmd-card"
                     >
-                      <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
-                      <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
-                    </li>
-                  </ol>
-                  <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                      <template v-if="isCommandMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            commandStatusClass(activity),
+                            {
+                              'cmd-expanded': isCommandExpanded(activity),
+                              'cmd-compact': true,
+                            },
+                          ]"
+                          @click="toggleCommandExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ activity.commandExecution?.command || '(command)' }}</code>
+                          <span class="cmd-status">{{ commandStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isCommandExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="shell">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">Shell</span>
+                                <span
+                                  v-if="commandCwdPreview(activity)"
+                                  class="cmd-surface-meta"
+                                  :title="activity.commandExecution?.cwd ?? ''"
+                                >
+                                  {{ commandCwdPreview(activity) }}
+                                </span>
+                              </div>
+                              <code class="cmd-surface-command">$ {{ activity.commandExecution?.command || '(command)' }}</code>
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isCommandOutputCondensed(activity) }"
+                              v-text="commandOutputText(activity)"
+                            ></pre>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="isMcpToolCallMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            mcpToolCallStatusClass(activity),
+                            {
+                              'cmd-expanded': isMcpToolCallExpanded(activity),
+                              'cmd-compact': true,
+                            },
+                          ]"
+                          @click="toggleMcpToolCallExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ mcpToolCallLabel(activity) }}</code>
+                          <span class="cmd-status">{{ mcpToolCallStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isMcpToolCallExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="mcp">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">MCP tool</span>
+                              </div>
+                              <code class="cmd-surface-command">{{ mcpToolCallLabel(activity) }}</code>
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(activity) }"
+                              v-text="mcpToolCallOutput(activity)"
+                            ></pre>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="isCollabToolCallMessage(activity)">
+                        <button
+                          type="button"
+                          class="cmd-row"
+                          :class="[
+                            collabToolCallStatusClass(activity),
+                            {
+                              'cmd-expanded': isCollabToolCallExpanded(activity),
+                              'cmd-compact': true,
+                            },
+                          ]"
+                          @click="toggleCollabToolCallExpand(activity)"
+                        >
+                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(activity) }">▶</span>
+                          <code class="cmd-label">{{ collabToolCallLabel(activity) }}</code>
+                          <span class="cmd-status">{{ collabToolCallStatusLabel(activity) }}</span>
+                        </button>
+                        <div
+                          class="cmd-output-wrap"
+                          :class="{ 'cmd-output-visible': isCollabToolCallExpanded(activity) }"
+                        >
+                          <div class="cmd-output-inner">
+                            <div class="cmd-surface" data-kind="agent">
+                              <div class="cmd-surface-header">
+                                <span class="cmd-surface-kind">Agent action</span>
+                              </div>
+                              <code class="cmd-surface-command">{{ collabToolCallLabel(activity) }}</code>
+                            <pre
+                              class="cmd-output"
+                              :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(activity) }"
+                              v-text="collabToolCallOutput(activity)"
+                            ></pre>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="isFileChangeMessage(activity)">
+                        <section v-if="readStandaloneFileChangeSummary(activity)" class="file-change-summary-block stage-summary-file-changes">
+                          <button
+                            type="button"
+                            class="cmd-row cmd-row-group cmd-compact file-change-summary-row"
+                            :class="{ 'cmd-expanded': isFileChangeSummaryExpanded(activity) }"
+                            @click="toggleFileChangeSummary(activity)"
+                          >
+                            <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isFileChangeSummaryExpanded(activity) }">▶</span>
+                            <span class="file-change-summary-label">
+                              {{ fileChangeSummaryLabel(readStandaloneFileChangeSummary(activity)) }}
+                            </span>
+                            <span class="file-change-summary-status">
+                              <span
+                                v-for="part in fileChangeSummaryStatusParts(readStandaloneFileChangeSummary(activity))"
+                                :key="`stage-summary-status:${activity.id}:${part.tone}:${part.label}`"
+                                class="file-change-signed-count"
+                                :data-tone="part.tone"
+                              >
+                                {{ part.label }}
+                              </span>
+                            </span>
+                          </button>
+                          <div class="cmd-group-wrap" :class="{ 'cmd-group-visible': isFileChangeSummaryExpanded(activity) }">
+                            <div class="file-change-panel-inner">
+                              <ul class="file-change-list">
+                                <li
+                                  v-for="change in readStandaloneFileChangeSummary(activity)?.changes ?? []"
+                                  :key="`stage-file-change:${activity.id}:${change.path}:${change.movedToPath || ''}`"
+                                  class="file-change-item"
+                                >
+                                  <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                                    {{ fileChangeOperationLabel(change) }}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    class="file-change-path-button"
+                                    :title="change.path"
+                                    @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
+                                  >
+                                    {{ displayFileChangePath(change.path) }}
+                                  </button>
+                                  <span v-if="change.movedToPath" class="file-change-arrow">→</span>
+                                  <button
+                                    v-if="change.movedToPath"
+                                    type="button"
+                                    class="file-change-path-button"
+                                    :title="change.movedToPath"
+                                    @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
+                                  >
+                                    {{ displayFileChangePath(change.movedToPath) }}
+                                  </button>
+                                  <span v-if="change.addedLineCount > 0 || change.removedLineCount > 0" class="file-change-delta">
+                                    <span
+                                      v-for="part in fileChangeDeltaParts(change)"
+                                      :key="`stage-change-delta:${activity.id}:${change.path}:${part.tone}:${part.label}`"
+                                      class="file-change-signed-count"
+                                      :data-tone="part.tone"
+                                    >
+                                      {{ part.label }}
+                                    </span>
+                                  </span>
+                                </li>
+                              </ul>
+                            </div>
+                          </div>
+                        </section>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  v-else-if="isPlanMessage(message)"
+                  class="plan-card"
+                  :class="{ 'plan-card-compact': isPlanCompact(message) }"
+                  :data-streaming="message.messageType === 'plan.live'"
+                  :data-compact="isPlanCompact(message)"
+                >
+                  <div class="plan-card-header">
+                    <div class="plan-card-header-copy">
+                      <div class="plan-card-title-row">
+                        <p class="plan-card-title">Plan</p>
+                        <span v-if="message.messageType === 'plan.live'" class="plan-card-badge">
+                          {{ planProgressSummary(message) }}
+                        </span>
+                      </div>
+                      <p v-if="isPlanCompact(message) && planCompactPreview(message)" class="plan-card-preview">
+                        {{ planCompactPreview(message) }}
+                      </p>
+                    </div>
+                    <div class="plan-card-header-actions">
+                      <button
+                        v-if="isPlanCollapsible(message)"
+                        type="button"
+                        class="plan-card-toggle-button"
+                        :aria-label="isPlanCompact(message) ? 'Expand plan' : 'Collapse plan'"
+                        :title="isPlanCompact(message) ? 'Expand plan' : 'Collapse plan'"
+                        @click="toggleLivePlanExpand(message)"
+                      >
+                        <IconTablerChevronDown
+                          class="icon-svg plan-card-toggle-icon"
+                          :class="{ 'plan-card-toggle-icon-open': !isPlanCompact(message) }"
+                        />
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="!isPlanCompact(message)" class="plan-card-body">
+                    <div
+                      v-if="readPlanExplanation(message)"
+                      class="plan-card-explanation plan-card-markdown"
+                      v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
+                    />
+                    <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
+                      <li
+                        v-for="(step, stepIndex) in readPlanSteps(message)"
+                        :key="`${message.id}:plan-step:${stepIndex}`"
+                        class="plan-step-item"
+                        :data-status="step.status"
+                      >
+                        <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
+                        <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
+                      </li>
+                    </ol>
+                    <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                  </div>
                 </div>
                 <div v-else-if="isReasoningMessage(message)" class="reasoning-card">
                   <div class="reasoning-card-header">
@@ -787,80 +1163,115 @@
         </div>
       </li>
       </template>
-      <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
+      <li
+        v-if="liveOverlay"
+        class="conversation-item conversation-item-overlay"
+        :data-compact="isLiveOverlayCompact"
+      >
         <div class="message-row">
           <div class="message-stack">
-            <article class="live-overlay-inline" aria-live="polite">
+            <article class="live-overlay-inline" :data-compact="isLiveOverlayCompact" aria-live="polite">
               <div class="live-overlay-header">
-                <p class="live-overlay-label">{{ liveOverlay.activityLabel }}</p>
-                <p v-if="liveOverlayStatusText" class="live-overlay-status" :data-stale="isLiveOverlayStale">
-                  {{ liveOverlayStatusText }}
-                </p>
-              </div>
-              <p v-if="liveOverlay.activitySummaryText" class="live-overlay-summary">{{ liveOverlay.activitySummaryText }}</p>
-              <ul v-if="liveOverlay.activityDetails.length > 0" class="live-overlay-activity-list">
-                <li
-                  v-for="(detail, detailIndex) in liveOverlay.activityDetails"
-                  :key="`live-detail:${detailIndex}:${detail}`"
-                  class="live-overlay-activity-item"
-                >
-                  {{ detail }}
-                </li>
-              </ul>
-              <section v-if="liveOverlay.backgroundAgents.length > 0" class="live-overlay-agents">
-                <div class="live-overlay-agents-header">
-                  <span class="live-overlay-agents-title">
-                    {{ liveOverlay.backgroundAgents.length }} background agents
-                  </span>
+                <div class="live-overlay-header-copy">
+                  <p class="live-overlay-label">
+                    {{ liveOverlay.activityLabel }}
+                    <span v-if="isLiveOverlayCompact && liveOverlayCompactSummary" class="live-overlay-summary-inline">
+                      {{ liveOverlayCompactSummary }}
+                    </span>
+                  </p>
                 </div>
-                <ul class="live-overlay-agents-list">
-                  <li
-                    v-for="agent in liveOverlay.backgroundAgents"
-                    :key="`live-agent:${agent.threadId}`"
-                    class="live-overlay-agent-row"
+                <div class="live-overlay-header-actions">
+                  <p v-if="liveOverlayStatusText" class="live-overlay-status" :data-stale="isLiveOverlayStale">
+                    {{ liveOverlayStatusText }}
+                  </p>
+                  <button
+                    v-if="canCompactLiveOverlay"
+                    type="button"
+                    class="live-overlay-toggle-button"
+                    @click="toggleLiveOverlayExpand"
                   >
-                    <div class="live-overlay-agent-copy">
-                      <span class="live-overlay-agent-name">{{ agent.title }}</span>
-                      <span
-                        v-if="backgroundAgentStatusDetail(agent)"
-                        class="live-overlay-agent-meta"
-                      >
-                        {{ backgroundAgentStatusDetail(agent) }}
-                      </span>
-                    </div>
-                    <div class="live-overlay-agent-actions">
-                      <span
-                        v-if="backgroundAgentDeltaParts(agent).length > 0"
-                        class="live-overlay-agent-delta"
-                      >
-                        <span
-                          v-for="part in backgroundAgentDeltaParts(agent)"
-                          :key="`live-agent-delta:${agent.threadId}:${part.tone}:${part.label}`"
-                          class="file-change-signed-count"
-                          :data-tone="part.tone"
-                        >
-                          {{ part.label }}
-                        </span>
-                      </span>
-                      <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
-                      <button
-                        type="button"
-                        class="live-overlay-agent-open"
-                        @click="openBackgroundAgentThread(agent.threadId)"
-                      >
-                        Open
-                      </button>
-                    </div>
+                    {{ isLiveOverlayCompact ? 'Open' : 'Hide' }}
+                  </button>
+                </div>
+              </div>
+              <template v-if="!isLiveOverlayCompact">
+                <p v-if="liveOverlay.activitySummaryText" class="live-overlay-summary">{{ liveOverlay.activitySummaryText }}</p>
+                <ul v-if="liveOverlay.activityDetails.length > 0" class="live-overlay-activity-list">
+                  <li
+                    v-for="(detail, detailIndex) in liveOverlay.activityDetails"
+                    :key="`live-detail:${detailIndex}:${detail}`"
+                    class="live-overlay-activity-item"
+                  >
+                    {{ detail }}
                   </li>
                 </ul>
-              </section>
-              <p
-                v-if="liveOverlay.reasoningText"
-                class="live-overlay-reasoning"
-              >
-                {{ liveOverlay.reasoningText }}
-              </p>
-              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+                <section v-if="liveOverlay.backgroundAgents.length > 0" class="live-overlay-agents">
+                  <div class="live-overlay-agents-header">
+                    <span class="live-overlay-agents-title">
+                      {{ liveOverlay.backgroundAgents.length }} background agents
+                    </span>
+                  </div>
+                  <ul class="live-overlay-agents-list">
+                    <li
+                      v-for="agent in liveOverlay.backgroundAgents"
+                      :key="`live-agent:${agent.threadId}`"
+                      class="live-overlay-agent-row"
+                    >
+                      <div class="live-overlay-agent-copy">
+                        <span class="live-overlay-agent-name">{{ agent.title }}</span>
+                        <div
+                          v-if="backgroundAgentRuntimeParts(agent).length > 0"
+                          class="live-overlay-agent-runtime"
+                        >
+                          <span
+                            v-for="part in backgroundAgentRuntimeParts(agent)"
+                            :key="`live-agent-runtime:${agent.threadId}:${part}`"
+                            class="live-overlay-agent-runtime-chip"
+                          >
+                            {{ part }}
+                          </span>
+                        </div>
+                        <span
+                          v-if="backgroundAgentStatusDetail(agent)"
+                          class="live-overlay-agent-meta"
+                        >
+                          {{ backgroundAgentStatusDetail(agent) }}
+                        </span>
+                      </div>
+                      <div class="live-overlay-agent-actions">
+                        <span
+                          v-if="backgroundAgentDeltaParts(agent).length > 0"
+                          class="live-overlay-agent-delta"
+                        >
+                          <span
+                            v-for="part in backgroundAgentDeltaParts(agent)"
+                            :key="`live-agent-delta:${agent.threadId}:${part.tone}:${part.label}`"
+                            class="file-change-signed-count"
+                            :data-tone="part.tone"
+                          >
+                            {{ part.label }}
+                          </span>
+                        </span>
+                        <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
+                        <button
+                          type="button"
+                          class="live-overlay-agent-open"
+                          @click="openBackgroundAgentThread(agent.threadId)"
+                        >
+                          Open
+                        </button>
+                      </div>
+                    </li>
+                  </ul>
+                </section>
+                <p
+                  v-if="liveOverlay.reasoningText"
+                  class="live-overlay-reasoning"
+                >
+                  {{ liveOverlay.reasoningText }}
+                </p>
+                <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+              </template>
             </article>
           </div>
         </div>
@@ -1128,6 +1539,7 @@ import { useMobile } from '../../composables/useMobile'
 
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
+import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
@@ -1139,7 +1551,10 @@ const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
+const expandedLiveStageSummaryIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
+const expandedLivePlanMessageId = ref('')
+const expandedLiveOverlayTurnId = ref('')
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
 const activeDiffViewerChangeKey = ref('')
 const isDiffViewerFileListOpen = ref(false)
@@ -1226,6 +1641,10 @@ function isFileChangeMessage(message: UiMessage): boolean {
     && message.fileChanges.length > 0
 }
 
+function isLiveStageSummaryMessage(message: UiMessage): boolean {
+  return message.messageType === 'stage.live' && !!message.liveStageSummary
+}
+
 function isCopyableAssistantMessage(message: UiMessage): boolean {
   return message.role === 'assistant'
     && !isCommandMessage(message)
@@ -1259,6 +1678,14 @@ const hasLiveAssistantText = computed(() =>
 
 const isLiveTurnRuntime = computed(() =>
   Boolean(props.liveOverlay) || activeToolMessageId.value.length > 0 || hasLiveAssistantText.value,
+)
+
+const canCompactLiveOverlay = computed(() =>
+  Boolean(props.liveOverlay) && hasLiveAssistantText.value && activeRuntimeTurnId.value.length > 0,
+)
+
+const isLiveOverlayCompact = computed(() =>
+  canCompactLiveOverlay.value && expandedLiveOverlayTurnId.value !== activeRuntimeTurnId.value,
 )
 
 const activeRuntimeTurnId = computed(() => {
@@ -1329,6 +1756,19 @@ const hiddenWorkedToolIds = computed(() => {
       || message.messageType === 'collabToolCall'
     ) {
       next.add(message.id)
+    }
+  }
+  return next
+})
+
+const hiddenStageToolIds = computed(() => {
+  const next = new Set<string>()
+  for (const message of props.messages) {
+    if (!isLiveStageSummaryMessage(message)) continue
+    const summary = message.liveStageSummary
+    if (!summary) continue
+    for (const toolMessageId of summary.toolMessageIds) {
+      next.add(toolMessageId)
     }
   }
   return next
@@ -1538,6 +1978,52 @@ function isWorkedExpanded(message: UiMessage): boolean {
   return expandedWorkedIds.value.has(message.id)
 }
 
+function toggleLiveStageSummary(message: UiMessage): void {
+  if (!isLiveStageSummaryMessage(message)) return
+  const next = new Set(expandedLiveStageSummaryIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedLiveStageSummaryIds.value = next
+}
+
+function isLiveStageSummaryExpanded(message: UiMessage): boolean {
+  return expandedLiveStageSummaryIds.value.has(message.id)
+}
+
+function liveStageSummaryLabel(message: UiMessage): string {
+  return message.liveStageSummary?.label || 'Stage'
+}
+
+function liveStageSummaryReasoning(message: UiMessage): string {
+  return message.liveStageSummary?.reasoningText ?? ''
+}
+
+function liveStageSummaryDetails(message: UiMessage): string[] {
+  return message.liveStageSummary?.details ?? []
+}
+
+function liveStageSummaryBackgroundAgents(message: UiMessage): BackgroundAgentRow[] {
+  return (message.liveStageSummary?.backgroundAgents ?? []) as BackgroundAgentRow[]
+}
+
+function liveStageSummaryMeta(message: UiMessage): string {
+  const summary = message.liveStageSummary
+  if (!summary) return ''
+  if (summary.summaryText.trim()) return summary.summaryText.trim()
+  if (summary.details.length > 0) return compactStageDetailSummary(summary.label, summary.details)
+  if (summary.reasoningText.trim()) return normalizeCompactPreviewText(summary.reasoningText)
+  if (summary.errorText.trim()) return summary.errorText.trim()
+  return ''
+}
+
+function getActivitiesForStage(message: UiMessage): UiMessage[] {
+  const summary = message.liveStageSummary
+  if (!summary) return []
+  const ids = new Set(summary.toolMessageIds)
+  if (ids.size === 0) return []
+  return props.messages.filter((candidate) => ids.has(candidate.id))
+}
+
 function toggleFileChangeSummary(message: UiMessage): void {
   const next = new Set(expandedFileChangeSummaryIds.value)
   if (next.has(message.id)) next.delete(message.id)
@@ -1547,6 +2033,101 @@ function toggleFileChangeSummary(message: UiMessage): void {
 
 function isFileChangeSummaryExpanded(message: UiMessage): boolean {
   return expandedFileChangeSummaryIds.value.has(message.id)
+}
+
+function compactPathTail(path: string | null | undefined): string {
+  const normalized = (path ?? '').trim().replace(/\\/gu, '/')
+  if (!normalized) return ''
+  const segments = normalized.split('/').filter((segment) => segment.length > 0)
+  if (segments.length === 0) return normalized
+  return segments.slice(-2).join('/')
+}
+
+function commandCwdPreview(message: UiMessage): string {
+  return compactPathTail(message.commandExecution?.cwd)
+}
+
+function commandOutputText(message: UiMessage): string {
+  return message.commandExecution?.aggregatedOutput || '(no output)'
+}
+
+function compactCommandPreview(command: string): string {
+  const normalized = normalizeCompactPreviewText(command)
+  if (!normalized) return 'Shell command'
+  if (normalized.length <= 72) return normalized
+  return `${normalized.slice(0, 69).trimEnd()}…`
+}
+
+function compactStageDetailSummary(label: string, details: string[]): string {
+  const primary = (details[0] ?? '').trim()
+  if (!primary) return ''
+  if (label === 'Running command') return compactCommandPreview(primary)
+  if (label === 'Calling MCP tool') return primary
+  if (label === 'Applying changes') return compactPathTail(primary) || primary
+  return normalizeCompactPreviewText(primary)
+}
+
+function formatReasoningEffortLabel(reasoningEffort: string): string {
+  const normalizedEffort = reasoningEffort.trim().toLowerCase()
+  if (!normalizedEffort) return ''
+  if (normalizedEffort === 'xhigh') return 'Extra high'
+  return normalizedEffort.charAt(0).toUpperCase() + normalizedEffort.slice(1)
+}
+
+function backgroundAgentRuntimeParts(agent: BackgroundAgentRow): string[] {
+  const parts: string[] = []
+  if (agent.model.trim()) parts.push(agent.model.trim())
+  const effort = formatReasoningEffortLabel(agent.reasoningEffort)
+  if (effort) parts.push(effort)
+  return parts
+}
+
+function normalizeCompactPreviewText(value: string): string {
+  return value
+    .replace(/\r?\n+/gu, ' ')
+    .replace(/`([^`]+)`/gu, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/gu, '$1')
+    .replace(/[*_~#>]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function isPlanCollapsible(message: UiMessage): boolean {
+  return message.messageType === 'plan.live'
+}
+
+function isLivePlanExpanded(message: UiMessage): boolean {
+  return expandedLivePlanMessageId.value === message.id
+}
+
+function isPlanCompact(message: UiMessage): boolean {
+  return isPlanCollapsible(message) && !isLivePlanExpanded(message)
+}
+
+function toggleLivePlanExpand(message: UiMessage): void {
+  if (!isPlanCollapsible(message)) return
+  expandedLivePlanMessageId.value = isLivePlanExpanded(message) ? '' : message.id
+}
+
+function planProgressSummary(message: UiMessage): string {
+  const steps = readPlanSteps(message)
+  if (steps.length === 0) return 'Live'
+  const completed = steps.filter((step) => step.status === 'completed').length
+  const active = steps.filter((step) => step.status === 'inProgress').length
+  const pending = Math.max(0, steps.length - completed - active)
+  const parts = [`${completed}/${steps.length} done`]
+  if (active > 0) parts.push(`${active} active`)
+  else if (pending > 0) parts.push(`${pending} left`)
+  return parts.join(' · ')
+}
+
+function planCompactPreview(message: UiMessage): string {
+  const steps = readPlanSteps(message)
+  const activeStep = steps.find((step) => step.status === 'inProgress')
+    ?? steps.find((step) => step.status === 'pending')
+    ?? steps[steps.length - 1]
+  const previewSource = activeStep?.step || readPlanExplanation(message) || message.text
+  return normalizeCompactPreviewText(previewSource)
 }
 
 function fileChangeKey(change: UiFileChange): string {
@@ -1930,6 +2511,34 @@ const liveOverlayStatusText = computed(() => {
   return `Last update ${ageMinutes}m ago`
 })
 
+const liveOverlayCompactSummary = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return ''
+  const parts: string[] = []
+  if (overlay.activitySummaryText.trim()) {
+    parts.push(overlay.activitySummaryText.trim())
+  } else if (overlay.activityDetails.length > 0) {
+    parts.push(overlay.activityDetails[0] ?? '')
+  }
+  if (overlay.backgroundAgents.length > 0) {
+    const count = overlay.backgroundAgents.length
+    parts.push(`${count} background ${count === 1 ? 'agent' : 'agents'}`)
+  }
+  if (parts.length === 0 && overlay.errorText.trim()) {
+    parts.push(overlay.errorText.trim())
+  }
+  if (parts.length === 0 && overlay.reasoningText.trim()) {
+    parts.push(normalizeCompactPreviewText(overlay.reasoningText))
+  }
+  return parts.filter((part) => part.length > 0).slice(0, 2).join(' · ')
+})
+
+function toggleLiveOverlayExpand(): void {
+  const turnId = activeRuntimeTurnId.value
+  if (!turnId || !canCompactLiveOverlay.value) return
+  expandedLiveOverlayTurnId.value = expandedLiveOverlayTurnId.value === turnId ? '' : turnId
+}
+
 function ensureHighlightJsLoaded(): Promise<void> {
   if (highlightJsModule.value) return Promise.resolve()
   if (!highlightJsLoader) {
@@ -1976,8 +2585,17 @@ function isFilePath(value: string): boolean {
   const looksLikeRelative = value.startsWith('./') || value.startsWith('../') || value.startsWith('~/')
   if (looksLikeUnixAbsolute || looksLikeWindowsAbsolute || looksLikeRelative) return true
 
-  // Bare relative paths should look like actual path segments, not arbitrary prose containing "/".
-  return /^[A-Za-z0-9._@-]+(?:[\\/][A-Za-z0-9._@-]+)+$/u.test(value)
+  // Bare relative paths should look like concrete repo paths, not arbitrary prose such as "command/MCP".
+  if (!/^[A-Za-z0-9._@-]+(?:[\\/][A-Za-z0-9._@-]+)+$/u.test(value)) return false
+
+  const normalized = value.replace(/\\/gu, '/')
+  const segments = normalized.split('/').filter(Boolean)
+  const lastSegment = segments[segments.length - 1] ?? ''
+  const hasExtension = /\.[A-Za-z0-9]{1,8}$/u.test(lastSegment)
+  const hasHiddenOrDottedSegment = segments.some((segment) => segment.startsWith('.'))
+  const hasThreeOrMoreSegments = segments.length >= 3
+
+  return hasExtension || hasHiddenOrDottedSegment || hasThreeOrMoreSegments
 }
 
 function getBasename(pathValue: string): string {
@@ -4301,6 +4919,15 @@ async function scheduleScrollRestore(mode: ScrollRestoreMode = 'restore-saved-po
 }
 
 watch(
+  () => activeRuntimeTurnId.value,
+  (nextTurnId, previousTurnId) => {
+    if (nextTurnId === previousTurnId) return
+    expandedLivePlanMessageId.value = ''
+    expandedLiveOverlayTurnId.value = ''
+  },
+)
+
+watch(
   () => props.messages,
   async (next) => {
     if (props.isLoading) return
@@ -4319,6 +4946,14 @@ watch(
     expandedCommandGroupIds.value = pruneCommandIdSet(
       expandedCommandGroupIds.value,
       new Set(Object.keys(groupedCommandsByLatestId.value)),
+    )
+    expandedLiveStageSummaryIds.value = pruneCommandIdSet(
+      expandedLiveStageSummaryIds.value,
+      new Set(
+        next
+          .filter((message) => isLiveStageSummaryMessage(message))
+          .map((message) => message.id),
+      ),
     )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
@@ -4501,6 +5136,10 @@ onBeforeUnmount(() => {
   @apply justify-center py-1;
 }
 
+.conversation-item-overlay[data-compact='true'] {
+  @apply py-0.5;
+}
+
 .message-row {
   @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex;
 }
@@ -4588,21 +5227,33 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-inline {
-  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] px-3 py-2.5 flex flex-col gap-1.5 rounded-2xl border border-zinc-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(247,247,246,0.94))] shadow-[0_1px_0_rgba(15,23,42,0.02)];
+  @apply w-full max-w-[min(var(--chat-column-max,45rem),100%)] px-0 py-1 flex flex-col gap-1;
   position: relative;
+}
+
+.live-overlay-inline[data-compact='true'] {
+  @apply gap-0.5 py-0.5;
 }
 
 .live-overlay-inline::before {
   content: '';
-  @apply absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-zinc-300/80;
+  @apply absolute left-0 top-1 bottom-1 w-px bg-zinc-200;
 }
 
 .live-overlay-header {
-  @apply flex items-center gap-2 justify-between;
+  @apply flex items-start gap-2 justify-between pl-3;
+}
+
+.live-overlay-header-copy {
+  @apply min-w-0 flex-1;
+}
+
+.live-overlay-header-actions {
+  @apply flex items-center gap-2 flex-shrink-0;
 }
 
 .live-overlay-label {
-  @apply m-0 text-sm leading-5 font-medium text-zinc-700;
+  @apply m-0 text-[12px] leading-5 font-medium text-zinc-500;
 }
 
 .live-overlay-status {
@@ -4614,7 +5265,23 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-summary {
-  @apply m-0 text-xs leading-4 text-zinc-400;
+  @apply m-0 text-[12px] leading-5 text-zinc-500;
+}
+
+.live-overlay-summary-compact {
+  @apply text-[12px] leading-5 text-zinc-500;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.live-overlay-summary-inline {
+  @apply ml-2 text-[12px] leading-5 font-normal text-zinc-400;
+}
+
+.live-overlay-toggle-button {
+  @apply inline-flex items-center rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] leading-4 text-zinc-400 transition hover:text-zinc-600;
 }
 
 .live-overlay-activity-list {
@@ -4631,7 +5298,7 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-agents {
-  @apply rounded-xl border border-zinc-200/80 bg-white/70 px-2.5 py-2 flex flex-col gap-1.5;
+  @apply rounded-2xl border border-zinc-200/80 bg-white/85 px-2.5 py-2 flex flex-col gap-1.5;
 }
 
 .live-overlay-agents-header {
@@ -4655,7 +5322,15 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-agent-name {
-  @apply min-w-0 truncate text-zinc-700;
+  @apply min-w-0 truncate text-[12px] font-medium text-zinc-700;
+}
+
+.live-overlay-agent-runtime {
+  @apply flex flex-wrap items-center gap-1;
+}
+
+.live-overlay-agent-runtime-chip {
+  @apply inline-flex items-center rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-zinc-500;
 }
 
 .live-overlay-agent-meta {
@@ -4820,7 +5495,16 @@ onBeforeUnmount(() => {
 }
 
 .plan-card {
-  @apply flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-slate-900;
+  @apply relative flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-1.5 px-0 py-1 text-slate-900;
+}
+
+.plan-card-compact {
+  @apply gap-1 py-0.5;
+}
+
+.plan-card::before {
+  content: '';
+  @apply absolute left-0 top-1 bottom-1 w-px bg-zinc-200;
 }
 
 .reasoning-card {
@@ -4882,19 +5566,56 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-header {
-  @apply flex items-center justify-between gap-3;
+  @apply flex items-start justify-between gap-3 pl-3;
+}
+
+.plan-card-header-copy {
+  @apply min-w-0 flex flex-col gap-0.5;
+}
+
+.plan-card-title-row {
+  @apply flex items-center gap-2;
+}
+
+.plan-card-header-actions {
+  @apply flex items-center gap-2 flex-shrink-0 self-start;
 }
 
 .plan-card-title {
-  @apply m-0 text-sm font-semibold leading-5 text-sky-900;
+  @apply m-0 text-[12px] font-medium leading-5 text-zinc-500;
 }
 
 .plan-card-badge {
-  @apply inline-flex items-center rounded-full bg-sky-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-sky-900;
+  @apply inline-flex items-center rounded-md bg-transparent px-0 py-0 text-[11px] font-medium leading-4 text-zinc-400;
+}
+
+.plan-card-toggle-button {
+  @apply inline-flex h-5 w-5 items-center justify-center rounded-md border border-transparent bg-transparent text-zinc-400 transition hover:text-zinc-700;
+}
+
+.plan-card-toggle-icon {
+  @apply h-4 w-4 transition-transform duration-150;
+}
+
+.plan-card-toggle-icon-open {
+  transform: rotate(180deg);
+}
+
+.plan-card-body {
+  @apply ml-3 flex max-h-64 flex-col gap-2 overflow-y-auto border-l border-zinc-200 pl-3 pr-1 pt-1;
+  overscroll-behavior: contain;
 }
 
 .plan-card-explanation {
-  @apply text-slate-700;
+  @apply text-zinc-600;
+}
+
+.plan-card-preview {
+  @apply m-0 text-[12px] leading-5 text-zinc-400;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
 }
 
 .plan-card-markdown {
@@ -5264,6 +5985,53 @@ onBeforeUnmount(() => {
   @apply flex flex-col;
 }
 
+.cmd-card {
+  @apply flex flex-col gap-1.5;
+}
+
+.stage-summary-block {
+  @apply relative w-full px-0 py-0.5;
+}
+
+.stage-summary-block::before {
+  content: '';
+  @apply absolute left-0 top-1 bottom-1 w-px bg-zinc-200;
+}
+
+.stage-summary-header {
+  @apply w-full flex items-start gap-2 bg-transparent border-none cursor-pointer p-0 pl-3 text-left;
+}
+
+.stage-summary-copy {
+  @apply min-w-0 flex-1;
+}
+
+.stage-summary-label {
+  @apply m-0 text-[12px] font-medium leading-5 text-zinc-500;
+}
+
+.stage-summary-meta-inline {
+  @apply ml-2 text-[12px] font-normal leading-5 text-zinc-400;
+  display: inline;
+}
+
+.stage-summary-details {
+  @apply ml-3 mt-1 flex flex-col gap-2 border-l border-zinc-200 pl-3 pt-1;
+}
+
+.stage-summary-reasoning {
+  @apply rounded-xl border border-slate-200 bg-white/70 px-3 py-2;
+}
+
+.stage-summary-detail-list {
+  @apply m-0;
+}
+
+.stage-summary-agents,
+.stage-summary-file-changes {
+  @apply mt-0;
+}
+
 .image-modal-backdrop {
   @apply fixed inset-0 z-50 bg-black/40 p-6 flex items-center justify-center;
 }
@@ -5285,17 +6053,17 @@ onBeforeUnmount(() => {
 }
 
 .cmd-row {
-  @apply w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 cursor-pointer transition text-left hover:bg-zinc-100;
+  @apply w-full flex items-center gap-1.5 rounded-lg border-none bg-transparent px-0 py-0 text-left cursor-pointer transition hover:bg-transparent;
 }
 
 .cmd-row.cmd-row-group {
-  @apply border-dashed border-zinc-300 bg-zinc-100/90 text-zinc-600;
+  @apply rounded-2xl border border-dashed border-zinc-300 bg-zinc-100/80 px-2 py-1.5 text-zinc-600;
 }
 
 .cmd-row.cmd-compact {
   gap: 0.375rem;
-  padding: 0.375rem 0.625rem;
-  border-radius: 0.625rem;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.5rem;
 }
 
 .cmd-row.cmd-compact .cmd-chevron {
@@ -5324,7 +6092,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-label {
-  @apply flex-1 min-w-0 truncate text-xs font-mono text-zinc-700;
+  @apply flex-1 min-w-0 truncate text-[12px] font-medium text-zinc-700;
 }
 
 .cmd-group-label {
@@ -5332,7 +6100,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-status {
-  @apply max-w-24 truncate text-right text-[11px] font-medium flex-shrink-0;
+  @apply max-w-20 truncate text-right text-[10px] font-medium uppercase tracking-[0.04em] flex-shrink-0;
 }
 
 .cmd-status-running .cmd-status {
@@ -5348,12 +6116,11 @@ onBeforeUnmount(() => {
 }
 
 .cmd-output-wrap {
-  @apply rounded-b-lg bg-zinc-900;
+  @apply rounded-[18px] border border-zinc-200 bg-zinc-50/75;
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 300ms ease-out, border-color 300ms ease-out;
-  border: 1px solid transparent;
-  border-top: none;
+  border-color: transparent;
 }
 
 .cmd-output-wrap.cmd-output-visible {
@@ -5380,12 +6147,54 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.cmd-surface {
+  @apply flex min-h-0 flex-col gap-1.5 px-2.5 py-2;
+}
+
+.cmd-surface-header {
+  @apply flex items-center justify-between gap-2 border-b border-zinc-200/80 pb-1;
+}
+
+.cmd-surface-kind {
+  @apply text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-500;
+}
+
+.cmd-surface-meta {
+  @apply min-w-0 truncate text-[11px] leading-4 text-zinc-400;
+}
+
+.cmd-surface-command {
+  @apply block overflow-x-auto whitespace-pre rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] leading-5 font-mono text-zinc-700;
+  scrollbar-width: thin;
+}
+
 .cmd-output {
-  @apply m-0 px-3 py-2 text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words max-h-60 overflow-y-auto;
+  @apply m-0 max-h-44 overflow-auto rounded-xl border border-zinc-200 bg-white px-2.5 py-2 text-[11px] font-mono text-zinc-700 whitespace-pre;
+  overscroll-behavior: contain;
 }
 
 .cmd-output.cmd-output-condensed {
-  max-height: 9rem;
+  max-height: 10rem;
+}
+
+.cmd-output::-webkit-scrollbar,
+.cmd-surface-command::-webkit-scrollbar,
+.plan-card-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.cmd-output::-webkit-scrollbar-thumb,
+.cmd-surface-command::-webkit-scrollbar-thumb,
+.plan-card-body::-webkit-scrollbar-thumb {
+  background: rgba(161, 161, 170, 0.55);
+  border-radius: 9999px;
+}
+
+.cmd-output::-webkit-scrollbar-track,
+.cmd-surface-command::-webkit-scrollbar-track,
+.plan-card-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .file-change-summary-block {

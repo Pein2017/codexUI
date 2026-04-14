@@ -100,6 +100,17 @@ export type CollabAgentStateData = {
   message: string
 }
 
+export type UiBackgroundAgentSummary = {
+  threadId: string
+  title: string
+  status: string
+  message: string
+  model: string
+  reasoningEffort: string
+  addedLineCount: number
+  removedLineCount: number
+}
+
 export type CollabToolCallData = {
   tool: 'spawnAgent' | 'sendInput' | 'resumeAgent' | 'wait' | 'closeAgent' | string
   status: 'inProgress' | 'completed' | 'failed'
@@ -236,6 +247,7 @@ export type UiMessage = {
   mcpToolCall?: McpToolCallData
   collabToolCall?: CollabToolCallData
   plan?: UiPlanData
+  liveStageSummary?: UiLiveStageSummary
   turnId?: string
   turnIndex?: number
 }
@@ -264,16 +276,22 @@ export type UiLiveOverlay = {
   activityLabel: string
   activitySummaryText: string
   activityDetails: string[]
-  backgroundAgents: Array<{
-    threadId: string
-    title: string
-    status: string
-    message: string
-    addedLineCount: number
-    removedLineCount: number
-  }>
+  backgroundAgents: UiBackgroundAgentSummary[]
   reasoningText: string
   errorText: string
+  updatedAtMs: number | null
+}
+
+export type UiLiveStageSummary = {
+  id: string
+  turnId: string
+  label: string
+  details: string[]
+  summaryText: string
+  reasoningText: string
+  errorText: string
+  backgroundAgents: UiBackgroundAgentSummary[]
+  toolMessageIds: string[]
   updatedAtMs: number | null
 }
 

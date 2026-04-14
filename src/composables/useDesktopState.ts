@@ -32,6 +32,7 @@ import {
 } from '../api/codexGateway'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
+  UiBackgroundAgentSummary,
   CollabToolCallData,
   CollaborationModeKind,
   CollaborationModeOption,
@@ -42,6 +43,7 @@ import type {
   SpeedMode,
   ThreadScrollState,
   UiFileChange,
+  UiLiveStageSummary,
   UiLiveOverlay,
   UiMessage,
   UiPlanData,
@@ -849,6 +851,7 @@ type TurnCompletedInfo = {
 }
 
 const WORKED_MESSAGE_TYPE = 'worked'
+const LIVE_STAGE_MESSAGE_TYPE = 'stage.live'
 
 function parseIsoTimestamp(value: string): number | null {
   if (!value) return null
@@ -968,6 +971,17 @@ function buildTurnSummaryMessage(summary: TurnSummaryState): UiMessage {
   }
 }
 
+function buildLiveStageSummaryMessage(stage: UiLiveStageSummary): UiMessage {
+  return {
+    id: stage.id,
+    role: 'system',
+    text: stage.summaryText || stage.label,
+    messageType: LIVE_STAGE_MESSAGE_TYPE,
+    turnId: stage.turnId,
+    liveStageSummary: stage,
+  }
+}
+
 function findLastAssistantMessageIndex(messages: UiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === 'assistant') {
@@ -986,6 +1000,46 @@ function insertTurnSummaryMessage(messages: UiMessage[], summary: TurnSummarySta
   }
   const next = [...sanitizedMessages]
   next.splice(insertIndex, 0, summaryMessage)
+  return next
+}
+
+function findStageInsertIndex(messages: UiMessage[], turnId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.turnId !== turnId) continue
+    if (
+      message.role === 'assistant'
+      && message.messageType !== 'plan'
+      && message.messageType !== 'plan.live'
+      && message.messageType !== 'reasoning'
+    ) {
+      return index
+    }
+  }
+  return -1
+}
+
+function insertLiveStageSummaryMessages(messages: UiMessage[], stages: UiLiveStageSummary[]): UiMessage[] {
+  if (stages.length === 0) return messages
+
+  const sanitizedMessages = messages.filter((message) => message.messageType !== LIVE_STAGE_MESSAGE_TYPE)
+  const groupedByTurnId = new Map<string, UiMessage[]>()
+  for (const stage of stages) {
+    const row = buildLiveStageSummaryMessage(stage)
+    const existing = groupedByTurnId.get(stage.turnId)
+    if (existing) existing.push(row)
+    else groupedByTurnId.set(stage.turnId, [row])
+  }
+
+  const next = [...sanitizedMessages]
+  for (const [turnId, rows] of groupedByTurnId.entries()) {
+    const insertIndex = findStageInsertIndex(next, turnId)
+    if (insertIndex < 0) {
+      next.push(...rows)
+      continue
+    }
+    next.splice(insertIndex, 0, ...rows)
+  }
   return next
 }
 
@@ -1155,6 +1209,8 @@ export function useDesktopState() {
   const liveOverlayUpdatedAtByThreadId = ref<Record<string, number>>({})
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  const liveStageSummariesByThreadId = ref<Record<string, UiLiveStageSummary[]>>({})
+  const activeLiveStageByThreadId = ref<Record<string, UiLiveStageSummary>>({})
   const inProgressById = ref<Record<string, boolean>>({})
   const compactingById = ref<Record<string, boolean>>({})
   type FileAttachment = { label: string; path: string; fsPath: string }
@@ -1284,29 +1340,30 @@ export function useDesktopState() {
     }
     return rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   })
-  const selectedLiveOverlay = computed<UiLiveOverlay | null>(() => {
-    const threadId = selectedThreadId.value
-    if (!threadId) return null
 
-    const activity = turnActivityByThreadId.value[threadId]
-    const reasoningText = (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
-    const errorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
-    const updatedAtMs = liveOverlayUpdatedAtByThreadId.value[threadId] ?? null
-    const activeTurnId = activeTurnIdByThreadId.value[threadId] ?? ''
+  function isStageableActivity(activity: TurnActivityState | null | undefined): activity is TurnActivityState {
+    return Boolean(activity && activity.label && activity.label !== 'Writing response')
+  }
+
+  function collectToolMessagesForTurn(threadId: string, turnId: string): UiMessage[] {
     const liveCommands = (liveCommandsByThreadId.value[threadId] ?? []).filter((message) => (
-      !activeTurnId || !message.turnId || message.turnId === activeTurnId
+      !turnId || !message.turnId || message.turnId === turnId
     ))
     const liveFileChanges = (liveFileChangeMessagesByThreadId.value[threadId] ?? []).filter((message) => (
-      !activeTurnId || !message.turnId || message.turnId === activeTurnId
+      !turnId || !message.turnId || message.turnId === turnId
     ))
-    const commandCount = liveCommands.filter((message) => message.commandExecution).length
-    const mcpCount = liveCommands.filter((message) => message.mcpToolCall).length
-    const collabCalls = liveCommands.filter((message) => message.collabToolCall)
-    const collabCount = collabCalls.length
-    const backgroundAgentCount = collabCalls.reduce((count, message) => (
-      count + (message.collabToolCall?.receiverThreadIds.length ?? 0)
-    ), 0)
-    const backgroundAgents = Array.from(new Map(
+    return [...liveCommands, ...liveFileChanges]
+  }
+
+  function collectToolMessagesForStage(threadId: string, stage: UiLiveStageSummary): UiMessage[] {
+    const ids = new Set(stage.toolMessageIds)
+    if (ids.size === 0) return []
+    return collectToolMessagesForTurn(threadId, stage.turnId).filter((message) => ids.has(message.id))
+  }
+
+  function collectBackgroundAgentsForToolMessages(toolMessages: UiMessage[]): UiBackgroundAgentSummary[] {
+    const collabCalls = toolMessages.filter((message) => message.collabToolCall)
+    return Array.from(new Map(
       collabCalls.flatMap((message) => {
         const collab = message.collabToolCall
         if (!collab) return []
@@ -1330,6 +1387,8 @@ export function useDesktopState() {
               title: matchingThread?.title || matchingThread?.preview || `Agent ${receiverThreadId.slice(0, 6)}`,
               status: matchingState?.status || 'running',
               message: matchingState?.message || '',
+              model: collab.model || '',
+              reasoningEffort: collab.reasoningEffort || '',
               addedLineCount: fileChangeTotals.addedLineCount,
               removedLineCount: fileChangeTotals.removedLineCount,
             },
@@ -1337,18 +1396,179 @@ export function useDesktopState() {
         })
       }),
     ).values())
-    const fileChangeCount = liveFileChanges.filter((message) => (message.fileChanges?.length ?? 0) > 0).length
+  }
+
+  function buildStageSummaryTextForToolMessages(toolMessages: UiMessage[]): string {
+    const commandCount = toolMessages.filter((message) => message.commandExecution).length
+    const mcpCount = toolMessages.filter((message) => message.mcpToolCall).length
+    const collabCalls = toolMessages.filter((message) => message.collabToolCall)
+    const collabCount = collabCalls.length
+    const backgroundAgentCount = collabCalls.reduce((count, message) => (
+      count + (message.collabToolCall?.receiverThreadIds.length ?? 0)
+    ), 0)
+    const fileChangeCount = toolMessages.filter((message) => (message.fileChanges?.length ?? 0) > 0).length
+    return buildToolSummaryText(commandCount, mcpCount, fileChangeCount, collabCount, backgroundAgentCount)
+  }
+
+  function createLiveStageSummary(threadId: string, activity: TurnActivityState): UiLiveStageSummary | null {
+    const turnId = activeTurnIdByThreadId.value[threadId] ?? ''
+    if (!turnId) return null
+    const currentStages = liveStageSummariesByThreadId.value[threadId] ?? []
+    const stageIndex = currentStages.filter((stage) => stage.turnId === turnId).length
+    return {
+      id: `${turnId}:stage:${stageIndex}`,
+      turnId,
+      label: activity.label,
+      details: [...activity.details],
+      summaryText: '',
+      reasoningText: '',
+      errorText: '',
+      backgroundAgents: [],
+      toolMessageIds: [],
+      updatedAtMs: liveOverlayUpdatedAtByThreadId.value[threadId] ?? null,
+    }
+  }
+
+  function setActiveLiveStage(threadId: string, stage: UiLiveStageSummary | null): void {
+    if (!threadId) return
+    if (!stage) {
+      if (activeLiveStageByThreadId.value[threadId]) {
+        activeLiveStageByThreadId.value = omitKey(activeLiveStageByThreadId.value, threadId)
+      }
+      return
+    }
+    activeLiveStageByThreadId.value = {
+      ...activeLiveStageByThreadId.value,
+      [threadId]: stage,
+    }
+  }
+
+  function syncActiveLiveStage(threadId: string): void {
+    const activeStage = activeLiveStageByThreadId.value[threadId]
+    if (!activeStage) return
+
+    const currentActivity = turnActivityByThreadId.value[threadId]
+    if (!currentActivity || currentActivity.label !== activeStage.label) return
+
+    const toolMessages = collectToolMessagesForStage(threadId, activeStage)
+    const summaryText = buildStageSummaryTextForToolMessages(toolMessages)
+    const backgroundAgents = collectBackgroundAgentsForToolMessages(toolMessages)
+    const nextReasoningText = (liveReasoningTextByThreadId.value[threadId] ?? '').trim() || activeStage.reasoningText
+    const nextErrorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim() || activeStage.errorText
+    const nextDetails = Array.from(new Set([
+      ...activeStage.details,
+      ...currentActivity.details,
+    ])).slice(-8)
+    const nextStage: UiLiveStageSummary = {
+      ...activeStage,
+      details: nextDetails,
+      summaryText,
+      reasoningText: nextReasoningText,
+      errorText: nextErrorText,
+      backgroundAgents,
+      updatedAtMs: liveOverlayUpdatedAtByThreadId.value[threadId] ?? activeStage.updatedAtMs,
+    }
+    setActiveLiveStage(threadId, nextStage)
+  }
+
+  function ensureActiveLiveStage(threadId: string): void {
+    const activity = turnActivityByThreadId.value[threadId]
+    if (!isStageableActivity(activity)) {
+      setActiveLiveStage(threadId, null)
+      return
+    }
+
+    const current = activeLiveStageByThreadId.value[threadId]
+    const turnId = activeTurnIdByThreadId.value[threadId] ?? ''
+    if (!turnId) return
+    if (current && current.turnId === turnId && current.label === activity.label) {
+      syncActiveLiveStage(threadId)
+      return
+    }
+
+    const nextStage = createLiveStageSummary(threadId, activity)
+    setActiveLiveStage(threadId, nextStage)
+    syncActiveLiveStage(threadId)
+  }
+
+  function hasMeaningfulLiveStage(stage: UiLiveStageSummary): boolean {
+    return (
+      stage.summaryText.trim().length > 0
+      || stage.reasoningText.trim().length > 0
+      || stage.errorText.trim().length > 0
+      || stage.details.length > 0
+      || stage.toolMessageIds.length > 0
+      || stage.backgroundAgents.length > 0
+    )
+  }
+
+  function finalizeActiveLiveStage(threadId: string): void {
+    const activeStage = activeLiveStageByThreadId.value[threadId]
+    if (!activeStage) return
+    syncActiveLiveStage(threadId)
+    const snapshot = activeLiveStageByThreadId.value[threadId]
+    setActiveLiveStage(threadId, null)
+    if (!snapshot || !hasMeaningfulLiveStage(snapshot)) return
+    liveStageSummariesByThreadId.value = {
+      ...liveStageSummariesByThreadId.value,
+      [threadId]: [...(liveStageSummariesByThreadId.value[threadId] ?? []), snapshot],
+    }
+  }
+
+  function attachToolMessageToActiveLiveStage(threadId: string, messageId: string): void {
+    if (!threadId || !messageId) return
+    const activeStage = activeLiveStageByThreadId.value[threadId]
+    if (!activeStage) return
+    if (activeStage.toolMessageIds.includes(messageId)) {
+      syncActiveLiveStage(threadId)
+      return
+    }
+    setActiveLiveStage(threadId, {
+      ...activeStage,
+      toolMessageIds: [...activeStage.toolMessageIds, messageId],
+    })
+    syncActiveLiveStage(threadId)
+  }
+
+  function clearLiveStagesForThread(threadId: string): void {
+    if (!threadId) return
+    setActiveLiveStage(threadId, null)
+    if (!(threadId in liveStageSummariesByThreadId.value)) return
+    liveStageSummariesByThreadId.value = omitKey(liveStageSummariesByThreadId.value, threadId)
+  }
+
+  const selectedLiveOverlay = computed<UiLiveOverlay | null>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return null
+
+    const activity = turnActivityByThreadId.value[threadId]
+    const reasoningText = (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
+    const errorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    const updatedAtMs = liveOverlayUpdatedAtByThreadId.value[threadId] ?? null
+    const activeStage = activeLiveStageByThreadId.value[threadId] ?? null
 
     if (!activity && !reasoningText && !errorText) return null
-    return {
+    const nextOverlay: UiLiveOverlay = {
       activityLabel: activity?.label || 'Thinking',
-      activitySummaryText: buildToolSummaryText(commandCount, mcpCount, fileChangeCount, collabCount, backgroundAgentCount),
-      activityDetails: activity?.details ?? [],
-      backgroundAgents,
-      reasoningText,
-      errorText,
+      activitySummaryText: activeStage?.summaryText ?? '',
+      activityDetails: activeStage?.details ?? activity?.details ?? [],
+      backgroundAgents: activeStage?.backgroundAgents ?? [],
+      reasoningText: activeStage?.reasoningText || reasoningText,
+      errorText: activeStage?.errorText || errorText,
       updatedAtMs,
     }
+
+    const isBareWritingResponse = (
+      nextOverlay.activityLabel === 'Writing response'
+      && nextOverlay.activitySummaryText.trim().length === 0
+      && nextOverlay.activityDetails.length === 0
+      && nextOverlay.backgroundAgents.length === 0
+      && nextOverlay.reasoningText.trim().length === 0
+      && nextOverlay.errorText.trim().length === 0
+    )
+    if (isBareWritingResponse) return null
+
+    return nextOverlay
   })
   const codexQuota = computed<UiRateLimitSnapshot | null>(() => codexRateLimit.value)
   const selectedThreadTokenUsage = computed<UiThreadTokenUsage | null>(() => {
@@ -1365,7 +1585,11 @@ export function useDesktopState() {
     const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
-    const combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent]
+    const liveStages = liveStageSummariesByThreadId.value[threadId] ?? []
+    const combined = insertLiveStageSummaryMessages(
+      [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent],
+      liveStages,
+    )
 
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
@@ -1944,6 +2168,8 @@ export function useDesktopState() {
     liveOverlayUpdatedAtByThreadId.value = pruneThreadStateMap(liveOverlayUpdatedAtByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
     liveFileChangeMessagesByThreadId.value = pruneThreadStateMap(liveFileChangeMessagesByThreadId.value, activeThreadIds)
+    liveStageSummariesByThreadId.value = pruneThreadStateMap(liveStageSummariesByThreadId.value, activeThreadIds)
+    activeLiveStageByThreadId.value = pruneThreadStateMap(activeLiveStageByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
@@ -2104,6 +2330,7 @@ export function useDesktopState() {
 
     const previous = turnActivityByThreadId.value[threadId]
     if (!activity) {
+      finalizeActiveLiveStage(threadId)
       if (previous) {
         turnActivityByThreadId.value = omitKey(turnActivityByThreadId.value, threadId)
       }
@@ -2121,10 +2348,24 @@ export function useDesktopState() {
       details: mergedDetails,
     }
 
-    if (areTurnActivitiesEqual(previous, nextActivity)) return
+    if (previous?.label !== nextActivity.label) {
+      finalizeActiveLiveStage(threadId)
+    }
+
+    if (areTurnActivitiesEqual(previous, nextActivity)) {
+      if (isStageableActivity(nextActivity)) {
+        ensureActiveLiveStage(threadId)
+      }
+      return
+    }
     turnActivityByThreadId.value = {
       ...turnActivityByThreadId.value,
       [threadId]: nextActivity,
+    }
+    if (isStageableActivity(nextActivity)) {
+      ensureActiveLiveStage(threadId)
+    } else {
+      setActiveLiveStage(threadId, null)
     }
   }
 
@@ -2141,6 +2382,7 @@ export function useDesktopState() {
       if (previous) {
         turnErrorByThreadId.value = omitKey(turnErrorByThreadId.value, threadId)
       }
+      syncActiveLiveStage(threadId)
       return
     }
 
@@ -2151,6 +2393,7 @@ export function useDesktopState() {
       ...turnErrorByThreadId.value,
       [threadId]: { message: normalizedMessage, transient },
     }
+    syncActiveLiveStage(threadId)
   }
 
   function clearTransientTurnErrorForThread(threadId: string): void {
@@ -2279,6 +2522,7 @@ export function useDesktopState() {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, nextMessage)
     setLiveFileChangeMessagesForThread(threadId, next)
+    attachToolMessageToActiveLiveStage(threadId, nextMessage.id)
   }
 
   function setLiveReasoningText(threadId: string, text: string): void {
@@ -2288,6 +2532,7 @@ export function useDesktopState() {
     if (normalized.length === 0) {
       if (!previous) return
       liveReasoningTextByThreadId.value = omitKey(liveReasoningTextByThreadId.value, threadId)
+      syncActiveLiveStage(threadId)
       return
     }
     if (previous === normalized) return
@@ -2295,6 +2540,7 @@ export function useDesktopState() {
       ...liveReasoningTextByThreadId.value,
       [threadId]: normalized,
     }
+    syncActiveLiveStage(threadId)
   }
 
   function appendLiveReasoningText(threadId: string, delta: string): void {
@@ -2310,6 +2556,7 @@ export function useDesktopState() {
       ...liveOverlayUpdatedAtByThreadId.value,
       [threadId]: updatedAtMs,
     }
+    syncActiveLiveStage(threadId)
   }
 
   function clearDelayedCompactOverlay(threadId: string): void {
@@ -2329,6 +2576,7 @@ export function useDesktopState() {
     if (!threadId) return
     if (!(threadId in liveReasoningTextByThreadId.value)) return
     liveReasoningTextByThreadId.value = omitKey(liveReasoningTextByThreadId.value, threadId)
+    syncActiveLiveStage(threadId)
   }
 
   function clearLivePlansForThread(threadId: string): void {
@@ -2345,6 +2593,7 @@ export function useDesktopState() {
 
   function clearCompletedTurnLiveState(threadId: string): void {
     if (!threadId) return
+    clearLiveStagesForThread(threadId)
     clearLivePlansForThread(threadId)
     clearLiveAgentMessagesForThread(threadId)
     clearLiveReasoningForThread(threadId)
@@ -3394,6 +3643,7 @@ export function useDesktopState() {
     const next = upsertMessage(previous, msg)
     if (next === previous) return
     liveCommandsByThreadId.value = { ...liveCommandsByThreadId.value, [threadId]: next }
+    attachToolMessageToActiveLiveStage(threadId, msg.id)
   }
 
   function removeLiveCommandsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
@@ -3507,12 +3757,14 @@ export function useDesktopState() {
         ...activeTurnIdByThreadId.value,
         [startedTurn.threadId]: startedTurn.turnId,
       }
+      clearLiveStagesForThread(startedTurn.threadId)
       clearLivePlansForThread(startedTurn.threadId)
       clearLiveFileChangesForThread(startedTurn.threadId)
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
       setThreadInProgress(startedTurn.threadId, true)
       touchLiveOverlay(startedTurn.threadId, startedTurn.startedAtMs)
+      ensureActiveLiveStage(startedTurn.threadId)
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
       }
@@ -3788,6 +4040,7 @@ export function useDesktopState() {
     if (notification.method === 'turn/completed') {
       activeReasoningItemId = ''
       shouldAutoScrollOnNextAgentEvent = false
+      clearLiveStagesForThread(notificationThreadId)
       clearLiveReasoningForThread(notificationThreadId)
       clearLiveOverlayTimestamp(notificationThreadId)
       if (liveCommandsByThreadId.value[notificationThreadId]) {
@@ -5052,6 +5305,8 @@ export function useDesktopState() {
     liveOverlayUpdatedAtByThreadId.value = {}
     liveCommandsByThreadId.value = {}
     liveFileChangeMessagesByThreadId.value = {}
+    liveStageSummariesByThreadId.value = {}
+    activeLiveStageByThreadId.value = {}
     turnIndexByTurnIdByThreadId.value = {}
     turnActivityByThreadId.value = {}
     turnSummaryByThreadId.value = {}
