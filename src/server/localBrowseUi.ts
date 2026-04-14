@@ -358,17 +358,25 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
 </html>`
 }
 
-export async function createTextEditorHtml(localPath: string): Promise<string> {
+export async function createTextEditorHtml(
+  localPath: string,
+  options: { readOnly?: boolean } = {},
+): Promise<string> {
   const content = await readFile(localPath, 'utf8')
   const parentPath = dirname(localPath)
   const language = languageForPath(localPath)
   const safeContentLiteral = escapeForInlineScriptString(content)
+  const isReadOnly = options.readOnly === true
+  const titlePrefix = isReadOnly ? 'Open' : 'Edit'
+  const primaryAction = isReadOnly
+    ? `<a id="editBtn" href="${escapeHtml(toEditHref(localPath))}">Edit file</a>`
+    : '<button id="saveBtn" type="button">Save</button>'
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Edit ${escapeHtml(localPath)}</title>
+  <title>${titlePrefix} ${escapeHtml(localPath)}</title>
   <style>
     html, body { width: 100%; height: 100%; margin: 0; }
     body { font-family: ui-monospace, Menlo, Monaco, monospace; background: #0b1020; color: #dbe6ff; display: flex; flex-direction: column; overflow: hidden; }
@@ -389,7 +397,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <div class="toolbar">
     <div class="row">
       <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
-      <button id="saveBtn" type="button">Save</button>
+      ${primaryAction}
       <span id="status"></span>
     </div>
     <div class="meta">${escapeHtml(localPath)} · ${escapeHtml(language)}</div>
@@ -411,17 +419,20 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       tabSize: 2,
       behavioursEnabled: true,
     });
+    editor.setReadOnly(${isReadOnly ? 'true' : 'false'});
     editor.resize();
 
-    saveBtn.addEventListener('click', async () => {
-      status.textContent = 'Saving...';
-      const response = await fetch(location.pathname, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        body: editor.getValue(),
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        status.textContent = 'Saving...';
+        const response = await fetch(location.pathname, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: editor.getValue(),
+        });
+        status.textContent = response.ok ? 'Saved' : 'Save failed';
       });
-      status.textContent = response.ok ? 'Saved' : 'Save failed';
-    });
+    }
   </script>
 </body>
 </html>`

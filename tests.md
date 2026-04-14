@@ -185,6 +185,42 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - If needed, delete the queued follow-up before compaction completes, or let the follow-up finish so the thread ends in the intended state.
 
+### Feature: Composer @ button opens recent file and folder mentions
+
+#### Prerequisites
+- App is running from this repository.
+- An existing thread is open and has an enabled composer.
+- The thread has a valid workspace `cwd` containing multiple files.
+
+#### Steps
+1. Open any thread with the normal composer visible.
+2. Click the new `@` button beside the composer controls.
+3. Confirm the textarea gains focus and a file mention popover opens above the composer without a noticeable blank wait.
+4. If the same workspace was already used earlier in the session, confirm the popover can show recent or warmed suggestions immediately before the refreshed server results arrive.
+5. Select one file from the popover, then remove the chip so the composer is clean again.
+6. Click `@` again and confirm the file you just mentioned appears near the top of the suggestion list.
+7. Type part of a filename after the inserted `@`, for example `App` or `package`.
+8. Confirm the popover filters to matching files from the current workspace.
+9. Type part of a folder name or parent directory path and confirm at least one folder candidate can appear with a folder icon when the workspace contains matching directories.
+10. Click one of the file or folder suggestions in the popover.
+11. Confirm the temporary `@query` text is removed from the textarea and the selected path appears as a chip above the composer.
+12. If you selected a folder, confirm its chip label is visually distinguishable from a file chip.
+13. Click the `@` button again while the cursor is already inside an active file mention token.
+14. Confirm the mention popover reopens without inserting a duplicate `@`.
+15. Repeat the flow on a narrow/mobile viewport and confirm the `@` control remains tappable and the mention popover is still usable.
+
+#### Expected Results
+- Web users can start the file mention flow by clicking an explicit `@` control instead of relying on keyboard typing alone.
+- Opening the `@` picker feels immediate because recent mentions and warmed workspace suggestions can render before a fresh search round completes.
+- Recently mentioned paths are surfaced first when reopening the picker in the same workspace.
+- The `@` button reuses the existing workspace search and chip attachment flow for both files and folders.
+- Selecting a suggestion attaches the chosen path as a chip and removes the temporary inline `@query` token from the draft.
+- Folder mentions are supported without uploading the folder contents.
+- Reopening the picker from an existing mention token does not create duplicate `@@` text.
+
+#### Rollback/Cleanup
+- Remove any temporary file chips from the composer if they should not be sent.
+
 ### Feature: Completed turns do not leave stale live chunks behind
 
 #### Prerequisites
@@ -1258,7 +1294,7 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - `git restore src/components/content/ThreadComposer.vue src/components/content/ThreadConversation.vue src/components/layout/DesktopLayout.vue src/style.css tests.md`
 
-### Feature: Chat file-link context menu (open/copy/edit)
+### Feature: Chat file-link context menu (open/edit/copy path)
 
 #### Prerequisites
 - App server is running from this repository.
@@ -1267,15 +1303,18 @@ This file tracks manual regression and feature verification steps.
 #### Steps
 1. In a message with a file link, right-click the file link text.
 2. Verify the custom context menu appears near the pointer.
-3. Click `Open link` and confirm the link opens in a new tab.
-4. Right-click the same file link again and click `Copy link`, then paste into a text input to verify copied value.
-5. For links under `/codex-local-browse...`, right-click and click `Edit file`.
-6. Click outside the menu and press `Escape` while the menu is open.
+3. Click `Open file` and confirm the link opens in a new tab.
+4. If the target is a text-like file, confirm the new tab shows an in-browser read-only viewer page instead of downloading the file.
+5. Right-click the same file link again and click `Copy file path`, then paste into a text input to verify the copied value is the local file path rather than a `/codex-local-...` web URL.
+6. Right-click the same file link again and click `Edit file`.
+7. Confirm the edit action opens the text editor page in a new tab.
+8. Click outside the menu and press `Escape` while the menu is open.
 
 #### Expected Results
-- Right-clicking any `.message-file-link` opens the custom context menu.
-- Menu includes `Open link` and `Copy link` for all links.
-- Menu includes `Edit file` only for browseable local file links.
+- Right-clicking local `.message-file-link` anchors opens the custom context menu.
+- Menu labels are `Open file`, `Edit file`, and `Copy file path`.
+- `Open file` opens an online viewer-style page for text-like files instead of triggering a browser download.
+- `Copy file path` copies the underlying local file path, not the routed web link.
 - Pointer-down outside, blur, and `Escape` close the menu.
 
 #### Rollback/Cleanup
@@ -1392,13 +1431,14 @@ This file tracks manual regression and feature verification steps.
 2. Send the message.
 3. Locate the sent user message in conversation.
 4. Verify file attachment chips are rendered above message text.
-5. Click a file chip and confirm it opens the browse URL in a new tab/window.
-6. Right-click the chip link and verify file-link context actions still appear (`Open link`, `Copy link`, and `Edit file` when applicable).
+5. Click a file chip and confirm it opens the file in a new tab/window.
+6. For text-like files, confirm the new tab is an in-browser viewer page rather than a raw download.
+7. Right-click the chip link and verify file-link context actions still appear (`Open file`, `Copy file path`, and `Edit file`).
 
 #### Expected Results
 - Sent user messages with `fileAttachments` show visible file chips in chat.
 - Chip labels match attachment labels from composer payload.
-- Chip links resolve through browse URLs and remain clickable.
+- Chip links open through the viewer/open flow and remain clickable.
 - Existing file-link context menu behavior works on the chip links.
 
 #### Rollback/Cleanup

@@ -91,7 +91,20 @@ type ProviderModelsResponse = {
   source: 'provider'
 }
 
+type ComposerPathEntry = {
+  path: string
+  kind: 'file' | 'folder'
+}
+
+type ComposerPathIndexCacheEntry = {
+  entries: ComposerPathEntry[]
+  cachedAtMs: number
+  refreshPromise: Promise<ComposerPathEntry[]> | null
+}
+
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
+const COMPOSER_PATH_CACHE_TTL_MS = 15_000
+const composerPathIndexCache = new Map<string, ComposerPathIndexCacheEntry>()
 
 const THREAD_RESPONSE_TURN_LIMIT = 10
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
@@ -653,6 +666,19 @@ function scoreFileCandidate(path: string, query: string): number {
   return 10
 }
 
+function collectDirectoryCandidates(paths: string[]): string[] {
+  const directories = new Set<string>()
+  for (const value of paths) {
+    const normalized = value.replace(/\\/g, '/').trim()
+    if (!normalized) continue
+    const segments = normalized.split('/').filter(Boolean)
+    for (let index = 1; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join('/'))
+    }
+  }
+  return [...directories]
+}
+
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&amp;/g, '&')
@@ -745,6 +771,70 @@ async function listFilesWithRipgrep(cwd: string): Promise<string[]> {
       reject(new Error(details || 'rg --files failed'))
     })
   })
+}
+
+async function buildComposerPathEntries(cwd: string): Promise<ComposerPathEntry[]> {
+  const files = await listFilesWithRipgrep(cwd)
+  const directories = collectDirectoryCandidates(files)
+  return [
+    ...files.map((path) => ({ path, kind: 'file' as const })),
+    ...directories.map((path) => ({ path, kind: 'folder' as const })),
+  ]
+}
+
+function getComposerPathIndexCacheState(cwd: string): ComposerPathIndexCacheEntry | null {
+  return composerPathIndexCache.get(cwd) ?? null
+}
+
+function setComposerPathIndexCacheState(cwd: string, entry: ComposerPathIndexCacheEntry): void {
+  composerPathIndexCache.set(cwd, entry)
+}
+
+function refreshComposerPathIndex(cwd: string): Promise<ComposerPathEntry[]> {
+  const existing = getComposerPathIndexCacheState(cwd)
+  if (existing?.refreshPromise) {
+    return existing.refreshPromise
+  }
+  const refreshPromise = buildComposerPathEntries(cwd)
+    .then((entries) => {
+      setComposerPathIndexCacheState(cwd, {
+        entries,
+        cachedAtMs: Date.now(),
+        refreshPromise: null,
+      })
+      return entries
+    })
+    .catch((error) => {
+      setComposerPathIndexCacheState(cwd, {
+        entries: existing?.entries ?? [],
+        cachedAtMs: existing?.cachedAtMs ?? 0,
+        refreshPromise: null,
+      })
+      throw error
+    })
+  setComposerPathIndexCacheState(cwd, {
+    entries: existing?.entries ?? [],
+    cachedAtMs: existing?.cachedAtMs ?? 0,
+    refreshPromise,
+  })
+  return refreshPromise
+}
+
+async function getComposerPathEntries(
+  cwd: string,
+  options: { allowStale?: boolean } = {},
+): Promise<ComposerPathEntry[]> {
+  const cached = getComposerPathIndexCacheState(cwd)
+  const now = Date.now()
+  const isFresh = cached !== null && (now - cached.cachedAtMs) <= COMPOSER_PATH_CACHE_TTL_MS
+  if (isFresh) {
+    return cached!.entries
+  }
+  if (options.allowStale && cached !== null) {
+    void refreshComposerPathIndex(cwd).catch(() => {})
+    return cached.entries
+  }
+  return await refreshComposerPathIndex(cwd)
 }
 
 function getCodexHomeDir(): string {
@@ -2465,7 +2555,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const rawCwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : ''
         const query = typeof payload?.query === 'string' ? payload.query.trim() : ''
         const limitRaw = typeof payload?.limit === 'number' ? payload.limit : 20
-        const limit = Math.max(1, Math.min(100, Math.floor(limitRaw)))
+        const limit = Math.max(1, Math.min(250, Math.floor(limitRaw)))
+        const recentPaths = Array.isArray(payload?.recentPaths)
+          ? payload.recentPaths
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim().replace(/\\/g, '/'))
+            .filter((value, index, rows) => value.length > 0 && rows.indexOf(value) === index)
+            .slice(0, 50)
+          : []
+        const recentPathRanks = new Map(recentPaths.map((path, index) => [path, index]))
         if (!rawCwd) {
           setJson(res, 400, { error: 'Missing cwd' })
           return
@@ -2483,13 +2581,22 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const files = await listFilesWithRipgrep(cwd)
-          const scored = files
-            .map((path) => ({ path, score: scoreFileCandidate(path, query) }))
+          const entries = await getComposerPathEntries(cwd, { allowStale: true })
+          const scored = entries
+            .map((entry) => ({
+              ...entry,
+              score: scoreFileCandidate(entry.path, query),
+              recentRank: recentPathRanks.get(entry.path) ?? Number.POSITIVE_INFINITY,
+            }))
             .filter((row) => query.length === 0 || row.score < 10)
-            .sort((a, b) => (a.score - b.score) || a.path.localeCompare(b.path))
+            .sort((a, b) =>
+              (a.score - b.score)
+              || (a.recentRank - b.recentRank)
+              || (a.kind === b.kind ? 0 : a.kind === 'folder' ? -1 : 1)
+              || a.path.localeCompare(b.path),
+            )
             .slice(0, limit)
-            .map((row) => ({ path: row.path }))
+            .map((row) => ({ path: row.path, kind: row.kind }))
           setJson(res, 200, { data: scored })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to search files') })

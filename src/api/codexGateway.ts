@@ -94,6 +94,7 @@ export type WorkspaceRootsState = {
 
 export type ComposerFileSuggestion = {
   path: string
+  kind: 'file' | 'folder'
 }
 
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
@@ -1005,14 +1006,14 @@ export async function forkThread(
   }
 }
 
-export type FileAttachmentParam = { label: string; path: string; fsPath: string }
+export type FileAttachmentParam = { label: string; path: string; fsPath: string; kind?: 'file' | 'folder' }
 
 function buildTextWithAttachments(
   prompt: string,
   files: FileAttachmentParam[],
 ): string {
   if (files.length === 0) return prompt
-  let prefix = '# Files mentioned by the user:\n'
+  let prefix = '# Paths mentioned by the user:\n'
   for (const f of files) {
     prefix += `\n## ${f.label}: ${f.path}\n`
   }
@@ -1563,7 +1564,12 @@ export async function getProjectRootSuggestion(basePath: string): Promise<{ name
   }
 }
 
-export async function searchComposerFiles(cwd: string, query: string, limit = 20): Promise<ComposerFileSuggestion[]> {
+export async function searchComposerFiles(
+  cwd: string,
+  query: string,
+  limit = 20,
+  recentPaths: string[] = [],
+): Promise<ComposerFileSuggestion[]> {
   const trimmedCwd = cwd.trim()
   if (!trimmedCwd) return []
   const response = await fetch('/codex-api/composer-file-search', {
@@ -1573,6 +1579,11 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
       cwd: trimmedCwd,
       query: query.trim(),
       limit,
+      recentPaths: recentPaths
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => normalizePathForUi(value))
+        .filter((value, index, rows) => value.length > 0 && rows.indexOf(value) === index)
+        .slice(0, 25),
     }),
   })
   const payload = (await response.json()) as unknown
@@ -1592,7 +1603,10 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
     const rawPath = row.path
     const value = typeof rawPath === 'string' ? rawPath.trim() : ''
     if (!value) continue
-    suggestions.push({ path: value })
+    suggestions.push({
+      path: normalizePathForUi(value),
+      kind: row.kind === 'folder' ? 'folder' : 'file',
+    })
   }
   return suggestions
 }

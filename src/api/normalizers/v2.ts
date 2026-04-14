@@ -33,7 +33,7 @@ function toRawPayload(value: unknown): string {
 }
 
 const FILE_ATTACHMENT_LINE = /^##\s+(.+?):\s+(.+?)\s*$/
-const FILES_MENTIONED_MARKER = /^#\s*files mentioned by the user\s*:?\s*$/i
+const FILES_MENTIONED_MARKER = /^#\s*(?:files|paths)\s+mentioned by the user\s*:?\s*$/i
 const ASSISTANT_FILE_CHANGE_HEADING = /^(?:#{1,6}\s*)?(?:本次修改文件(?:和操作)?(?:如下)?|修改文件和操作)\s*[:：]?\s*$/u
 
 function extractFileAttachments(value: string): UiFileAttachment[] {

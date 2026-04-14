@@ -266,7 +266,7 @@
 
               <div v-if="message.fileAttachments && message.fileAttachments.length > 0" class="message-file-attachments">
                 <span v-for="att in message.fileAttachments" :key="`${message.id}:${att.path}`" class="message-file-chip">
-                  <span class="message-file-chip-icon">📄</span>
+                  <span class="message-file-chip-icon">{{ att.label.endsWith('/') ? '📁' : '📄' }}</span>
                   <a
                     class="message-file-link message-file-chip-name"
                     :href="toBrowseUrl(att.path)"
@@ -987,10 +987,10 @@
       @click.stop
     >
       <button type="button" class="file-link-context-menu-item" @click="openFileLinkContextBrowse">
-        Open link
+        Open file
       </button>
-      <button type="button" class="file-link-context-menu-item" @click="copyFileLinkContextLink">
-        Copy link
+      <button type="button" class="file-link-context-menu-item" @click="copyFileLinkContextPath">
+        Copy file path
       </button>
       <button
         v-if="fileLinkContextEditUrl"
@@ -1148,6 +1148,7 @@ const isFileLinkContextMenuVisible = ref(false)
 const fileLinkContextMenuX = ref(0)
 const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
+const fileLinkContextLocalPath = ref('')
 const fileLinkContextEditUrl = ref('')
 const { isMobile } = useMobile()
 
@@ -3118,7 +3119,7 @@ function toBrowseUrl(pathValue: string): string {
 
   if (looksLikeAbsolutePath(resolved)) {
     const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return `/codex-local-browse${encodeURI(normalizedResolved)}`
+    return `/codex-local-open${encodeURI(normalizedResolved)}`
   }
 
   return '#'
@@ -3129,17 +3130,26 @@ const fileLinkContextMenuStyle = computed(() => ({
   top: `${String(fileLinkContextMenuY.value)}px`,
 }))
 
-function toEditUrlFromBrowseHref(href: string): string {
+function extractLocalPathFromFileHref(href: string): string {
   const normalizedHref = href.trim()
   if (!normalizedHref) return ''
   try {
     const resolved = new URL(normalizedHref, window.location.href)
-    if (!resolved.pathname.startsWith('/codex-local-browse')) return ''
-    const editPath = `/codex-local-edit${resolved.pathname.slice('/codex-local-browse'.length)}`
-    return `${editPath}${resolved.search}${resolved.hash}`
+    const routePrefixes = ['/codex-local-open', '/codex-local-browse', '/codex-local-edit']
+    const matchedPrefix = routePrefixes.find((prefix) => resolved.pathname.startsWith(prefix))
+    if (!matchedPrefix) return ''
+    const encodedPath = resolved.pathname.slice(matchedPrefix.length)
+    if (!encodedPath) return ''
+    return decodeURIComponent(encodedPath)
   } catch {
     return ''
   }
+}
+
+function toEditUrlFromLocalPath(localPath: string): string {
+  const normalized = localPath.trim()
+  if (!normalized) return ''
+  return `/codex-local-edit${encodeURI(normalized)}`
 }
 
 function onConversationContextMenu(event: MouseEvent): void {
@@ -3151,12 +3161,17 @@ function onConversationContextMenu(event: MouseEvent): void {
 
   const href = (anchor.getAttribute('href') ?? '').trim()
   if (!href || href === '#') return
+  const localPath = extractLocalPathFromFileHref(href)
+  if (!localPath) return
+  const anchorLabel = anchor.textContent?.trim() ?? ''
+  const isDirectoryLike = anchorLabel.endsWith('/')
 
   event.preventDefault()
   event.stopPropagation()
 
   fileLinkContextBrowseUrl.value = href
-  fileLinkContextEditUrl.value = toEditUrlFromBrowseHref(href)
+  fileLinkContextLocalPath.value = localPath
+  fileLinkContextEditUrl.value = isDirectoryLike ? '' : toEditUrlFromLocalPath(localPath)
   fileLinkContextMenuX.value = event.clientX
   fileLinkContextMenuY.value = event.clientY
   isFileLinkContextMenuVisible.value = true
@@ -3165,6 +3180,9 @@ function onConversationContextMenu(event: MouseEvent): void {
 function closeFileLinkContextMenu(): void {
   if (!isFileLinkContextMenuVisible.value) return
   isFileLinkContextMenuVisible.value = false
+  fileLinkContextBrowseUrl.value = ''
+  fileLinkContextLocalPath.value = ''
+  fileLinkContextEditUrl.value = ''
 }
 
 function openFileLinkContextBrowse(): void {
@@ -3181,16 +3199,16 @@ function openFileLinkContextEdit(): void {
   window.open(href, '_blank', 'noopener,noreferrer')
 }
 
-async function copyFileLinkContextLink(): Promise<void> {
-  const href = fileLinkContextBrowseUrl.value
+async function copyFileLinkContextPath(): Promise<void> {
+  const localPath = fileLinkContextLocalPath.value
   closeFileLinkContextMenu()
-  if (!href || href === '#') return
+  if (!localPath) return
 
   try {
-    await navigator.clipboard.writeText(href)
+    await navigator.clipboard.writeText(localPath)
   } catch {
     const textarea = document.createElement('textarea')
-    textarea.value = href
+    textarea.value = localPath
     textarea.setAttribute('readonly', 'true')
     textarea.style.position = 'fixed'
     textarea.style.opacity = '0'

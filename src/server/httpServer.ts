@@ -148,7 +148,42 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 6. Serve local files by path to preserve relative asset loading for HTML.
+  // 6. Open local files/directories in browser-friendly pages.
+  app.get('/codex-local-open/*path', async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    const newProjectName = typeof req.query.newProjectName === 'string' ? req.query.newProjectName : ''
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+
+    try {
+      const fileStat = await stat(localPath)
+      res.setHeader('Cache-Control', 'private, no-store')
+      if (fileStat.isDirectory()) {
+        const html = await createDirectoryListingHtml(localPath, { newProjectName })
+        res.status(200).type('text/html; charset=utf-8').send(html)
+        return
+      }
+
+      if (await isTextEditableFile(localPath)) {
+        const html = await createTextEditorHtml(localPath, { readOnly: true })
+        res.status(200).type('text/html; charset=utf-8').send(html)
+        return
+      }
+
+      res.setHeader('Content-Disposition', 'inline')
+      res.sendFile(localPath, { dotfiles: 'allow' }, (error) => {
+        if (!error) return
+        if (!res.headersSent) res.status(404).json({ error: 'File not found.' })
+      })
+    } catch {
+      res.status(404).json({ error: 'File not found.' })
+    }
+  })
+
+  // 7. Serve local files by path to preserve relative asset loading for HTML.
   app.get('/codex-local-browse/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
@@ -176,7 +211,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
   })
 
-  // 7. Edit text-like local files.
+  // 8. Edit text-like local files.
   app.get('/codex-local-edit/*path', async (req, res) => {
     const rawPath = readWildcardPathParam(req.params.path)
     const localPath = decodeBrowsePath(`/${rawPath}`)
@@ -219,12 +254,12 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
   const hasFrontendAssets = existsSync(spaEntryFile)
 
-  // 8. Static files from Vue build
+  // 9. Static files from Vue build
   if (hasFrontendAssets) {
     app.use(express.static(distDir))
   }
 
-  // 9. SPA fallback
+  // 10. SPA fallback
   app.use((_req, res) => {
     if (!hasFrontendAssets) {
       res

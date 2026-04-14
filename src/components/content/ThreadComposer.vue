@@ -55,7 +55,8 @@
 
       <div v-if="standaloneFileAttachments.length > 0" class="thread-composer-file-chips">
         <span v-for="att in standaloneFileAttachments" :key="att.fsPath" class="thread-composer-file-chip">
-          <IconTablerFilePencil class="thread-composer-file-chip-icon" />
+          <IconTablerFolder v-if="att.kind === 'folder'" class="thread-composer-file-chip-icon thread-composer-file-chip-icon--folder" />
+          <IconTablerFilePencil v-else class="thread-composer-file-chip-icon" />
           <span class="thread-composer-file-chip-name" :title="att.fsPath">{{ att.label }}</span>
           <button
             class="thread-composer-file-chip-remove"
@@ -91,6 +92,10 @@
           <span class="thread-composer-drop-overlay-copy">Drop images or files</span>
         </div>
         <div v-if="isFileMentionOpen" class="thread-composer-file-mentions">
+          <div class="thread-composer-file-mentions-header">
+            <span class="thread-composer-file-mentions-title">Mention files or folders</span>
+            <span class="thread-composer-file-mentions-hint">{{ fileMentionHintText }}</span>
+          </div>
           <template v-if="fileMentionSuggestions.length > 0">
             <button
               v-for="(item, index) in fileMentionSuggestions"
@@ -107,6 +112,7 @@
               >
                 {{ getMentionBadgeText(item.path) }}
               </span>
+              <IconTablerFolder v-else-if="item.kind === 'folder'" class="thread-composer-file-mention-icon-file" />
               <span v-else-if="isMarkdownFile(item.path)" class="thread-composer-file-mention-icon-markdown">↓</span>
               <IconTablerFilePencil v-else class="thread-composer-file-mention-icon-file" />
               <span class="thread-composer-file-mention-text">
@@ -149,7 +155,7 @@
           'thread-composer-controls--inline-edit': isInlineEdit,
         }"
       >
-        <div v-if="!isDictationRecording" class="thread-composer-primary-controls">
+          <div v-if="!isDictationRecording" class="thread-composer-primary-controls">
           <div ref="attachMenuRootRef" class="thread-composer-attach">
             <button
               class="thread-composer-attach-trigger"
@@ -256,6 +262,17 @@
               </template>
             </div>
           </div>
+
+          <button
+            class="thread-composer-command-button thread-composer-command-button--mention"
+            type="button"
+            :disabled="isInteractionDisabled"
+            aria-label="Mention a file or folder from the workspace"
+            title="Mention a file or folder from the workspace"
+            @click="openFileMentionPicker"
+          >
+            @
+          </button>
 
           <ComposerDropdown
             v-if="!isInlineEdit"
@@ -470,7 +487,7 @@ const props = defineProps<{
   dictationLanguage?: string
 }>()
 
-export type FileAttachment = { label: string; path: string; fsPath: string }
+export type FileAttachment = { label: string; path: string; fsPath: string; kind?: 'file' | 'folder' }
 
 export type ComposerDraftPayload = {
   text: string
@@ -530,10 +547,25 @@ type AttachmentBatchStats = {
   failed: number
 }
 
+type RecentMentionEntry = {
+  path: string
+  kind: 'file' | 'folder'
+}
+
+type WarmComposerSuggestionCacheEntry = {
+  rows: ComposerFileSuggestion[]
+  warmedAtMs: number
+  pending: Promise<void> | null
+}
+
 const CONTEXT_WINDOW_BASELINE_TOKENS = 12000
 const DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
 const DEFAULT_AUTO_COMPACT_PERCENT = 90
 const PASTED_TEXT_FILE_THRESHOLD = 2000
+const FILE_MENTION_DEBOUNCE_MS = 80
+const EMPTY_FILE_MENTION_DEBOUNCE_MS = 0
+const WARM_FILE_MENTION_LIMIT = 200
+const WARM_FILE_MENTION_CACHE_TTL_MS = 15_000
 
 const draft = ref('')
 const selectedImages = ref<SelectedImage[]>([])
@@ -602,7 +634,9 @@ let dragDepth = 0
 let attachmentSessionToken = 0
 const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
+const RECENT_MENTION_STORAGE_PREFIX = 'codex-web-local.composer-recent-mentions.v1.'
 let lastActiveThreadId = ''
+const warmComposerSuggestionCacheByCwd = new Map<string, WarmComposerSuggestionCacheEntry>()
 
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
@@ -823,6 +857,11 @@ const contextUsageView = computed(() => buildContextUsageView(props.threadTokenU
 const contextUsageSummaryText = computed(() => contextUsageView.value?.summaryText ?? '')
 const contextUsageTooltipText = computed(() => contextUsageView.value?.tooltipText ?? '')
 const contextUsageTone = computed(() => contextUsageView.value?.tone ?? 'healthy')
+const fileMentionHintText = computed(() =>
+  mentionQuery.value.trim().length > 0
+    ? `Filtering for "${mentionQuery.value.trim()}"`
+    : 'Type to filter or pick a recent file or folder from this workspace',
+)
 
 function formatPlanType(planType: string | null | undefined): string {
   if (!planType || planType === 'unknown') return ''
@@ -1116,6 +1155,14 @@ function getDraftStorageKey(threadId: string): string {
   return `${DRAFT_STORAGE_PREFIX}${threadId}`
 }
 
+function getRecentMentionStorageKey(cwd: string): string {
+  return `${RECENT_MENTION_STORAGE_PREFIX}${cwd.trim().replace(/\\/g, '/')}`
+}
+
+function normalizeComposerPath(path: string): string {
+  return path.trim().replace(/\\/g, '/')
+}
+
 function loadPersistedDraftForThread(threadId: string): ComposerDraftPayload | null {
   if (typeof window === 'undefined') return null
   const normalizedThreadId = threadId.trim()
@@ -1143,6 +1190,7 @@ function loadPersistedDraftForThread(threadId: string): ComposerDraftPayload | n
           && typeof attachment.label === 'string'
           && typeof attachment.path === 'string'
           && typeof attachment.fsPath === 'string'
+          && (attachment.kind === undefined || attachment.kind === 'file' || attachment.kind === 'folder')
         ))
         : [],
       skills: Array.isArray(parsed.skills)
@@ -1184,6 +1232,158 @@ function clearPersistedDraftForThread(threadId: string): void {
     fileAttachments: [],
     skills: [],
   })
+}
+
+function loadRecentMentionEntries(cwd: string): RecentMentionEntry[] {
+  if (typeof window === 'undefined') return []
+  const normalizedCwd = normalizeComposerPath(cwd)
+  if (!normalizedCwd) return []
+  try {
+    const raw = window.localStorage.getItem(getRecentMentionStorageKey(normalizedCwd))
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const entries: RecentMentionEntry[] = []
+    for (const value of parsed) {
+      if (typeof value === 'string') {
+        const normalizedPath = normalizeComposerPath(value)
+        if (!normalizedPath) continue
+        entries.push({
+          path: normalizedPath,
+          kind: normalizedPath.endsWith('/') ? 'folder' : 'file',
+        })
+        continue
+      }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      const record = value as Record<string, unknown>
+      const normalizedPath = normalizeComposerPath(typeof record.path === 'string' ? record.path : '')
+      if (!normalizedPath) continue
+      entries.push({
+        path: normalizedPath,
+        kind: record.kind === 'folder' ? 'folder' : 'file',
+      })
+    }
+    return entries
+      .filter((entry, index, rows) => rows.findIndex((candidate) => candidate.path === entry.path) === index)
+      .slice(0, 25)
+  } catch {
+    return []
+  }
+}
+
+function loadRecentMentionPaths(cwd: string): string[] {
+  return loadRecentMentionEntries(cwd).map((entry) => entry.path)
+}
+
+function rememberRecentMentionEntry(entry: RecentMentionEntry): void {
+  if (typeof window === 'undefined') return
+  const normalizedCwd = normalizeComposerPath(props.cwd ?? '')
+  const normalizedPath = normalizeComposerPath(entry.path)
+  if (!normalizedCwd || !normalizedPath) return
+  const nextEntries = [
+    { path: normalizedPath, kind: entry.kind },
+    ...loadRecentMentionEntries(normalizedCwd).filter((value) => value.path !== normalizedPath),
+  ].slice(0, 25)
+  try {
+    window.localStorage.setItem(getRecentMentionStorageKey(normalizedCwd), JSON.stringify(nextEntries))
+  } catch {
+    // Ignore localStorage failures.
+  }
+}
+
+function scoreImmediateMentionCandidate(path: string, query: string): number {
+  if (!query) return 0
+  const lowerPath = path.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const baseName = lowerPath.slice(lowerPath.lastIndexOf('/') + 1)
+  if (baseName === lowerQuery) return 0
+  if (baseName.startsWith(lowerQuery)) return 1
+  if (baseName.includes(lowerQuery)) return 2
+  if (lowerPath.includes(`/${lowerQuery}`)) return 3
+  if (lowerPath.includes(lowerQuery)) return 4
+  return 10
+}
+
+function getWarmComposerSuggestionCacheEntry(cwd: string): WarmComposerSuggestionCacheEntry | null {
+  const normalizedCwd = normalizeComposerPath(cwd)
+  if (!normalizedCwd) return null
+  return warmComposerSuggestionCacheByCwd.get(normalizedCwd) ?? null
+}
+
+function setWarmComposerSuggestionCacheEntry(cwd: string, entry: WarmComposerSuggestionCacheEntry): void {
+  const normalizedCwd = normalizeComposerPath(cwd)
+  if (!normalizedCwd) return
+  warmComposerSuggestionCacheByCwd.set(normalizedCwd, entry)
+}
+
+function getImmediateFileMentionSuggestions(cwd: string, query: string): ComposerFileSuggestion[] {
+  const normalizedQuery = query.trim()
+  const recentEntries = loadRecentMentionEntries(cwd).map((entry) => ({
+    path: entry.path,
+    kind: entry.kind,
+  }))
+  const warmRows = getWarmComposerSuggestionCacheEntry(cwd)?.rows ?? []
+  const merged = [...recentEntries, ...warmRows]
+  const deduped = merged.filter((entry, index, rows) => (
+    rows.findIndex((candidate) => candidate.path === entry.path) === index
+  ))
+  return deduped
+    .map((entry, index) => ({
+      entry,
+      score: scoreImmediateMentionCandidate(entry.path, normalizedQuery),
+      recentRank: recentEntries.findIndex((candidate) => candidate.path === entry.path),
+      originalRank: index,
+    }))
+    .filter((row) => normalizedQuery.length === 0 || row.score < 10)
+    .sort((left, right) =>
+      (left.score - right.score)
+      || ((left.recentRank < 0 ? Number.POSITIVE_INFINITY : left.recentRank)
+        - (right.recentRank < 0 ? Number.POSITIVE_INFINITY : right.recentRank))
+      || (left.originalRank - right.originalRank),
+    )
+    .slice(0, 20)
+    .map((row) => row.entry)
+}
+
+async function prewarmFileMentionSuggestions(cwd: string): Promise<void> {
+  const normalizedCwd = normalizeComposerPath(cwd)
+  if (!normalizedCwd) return
+  const existing = getWarmComposerSuggestionCacheEntry(normalizedCwd)
+  if (existing?.pending) {
+    await existing.pending
+    return
+  }
+  const now = Date.now()
+  if (existing && (now - existing.warmedAtMs) <= WARM_FILE_MENTION_CACHE_TTL_MS) {
+    return
+  }
+  const pending = (async () => {
+    try {
+      const rows = await searchComposerFiles(
+        normalizedCwd,
+        '',
+        WARM_FILE_MENTION_LIMIT,
+        loadRecentMentionPaths(normalizedCwd),
+      )
+      setWarmComposerSuggestionCacheEntry(normalizedCwd, {
+        rows,
+        warmedAtMs: Date.now(),
+        pending: null,
+      })
+    } catch {
+      setWarmComposerSuggestionCacheEntry(normalizedCwd, {
+        rows: existing?.rows ?? [],
+        warmedAtMs: existing?.warmedAtMs ?? 0,
+        pending: null,
+      })
+    }
+  })()
+  setWarmComposerSuggestionCacheEntry(normalizedCwd, {
+    rows: existing?.rows ?? [],
+    warmedAtMs: existing?.warmedAtMs ?? 0,
+    pending,
+  })
+  await pending
 }
 
 function getCurrentDraftPayload(): ComposerDraftPayload {
@@ -1307,12 +1507,22 @@ function getFolderUploadPercent(group: FolderUploadGroup): number {
   return Math.round((group.processed / group.total) * 100)
 }
 
-function addFileAttachment(filePath: string, customLabel?: string): void {
+function buildAttachmentLabel(filePath: string, kind: 'file' | 'folder', customLabel?: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  const fallbackLabel = parts[parts.length - 1] || normalized
+  const baseLabel = customLabel?.trim() || fallbackLabel
+  if (kind === 'folder' && !baseLabel.endsWith('/')) {
+    return `${baseLabel}/`
+  }
+  return baseLabel
+}
+
+function addFileAttachment(filePath: string, customLabel?: string, kind: 'file' | 'folder' = 'file'): void {
   const normalized = filePath.replace(/\\/g, '/')
   if (fileAttachments.value.some((a) => a.fsPath === normalized)) return
-  const parts = normalized.split('/').filter(Boolean)
-  const label = customLabel?.trim() || parts[parts.length - 1] || normalized
-  fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized }]
+  const label = buildAttachmentLabel(normalized, kind, customLabel)
+  fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized, kind }]
 }
 
 function isImageFile(file: File): boolean {
@@ -1687,6 +1897,54 @@ function onInputBlur(): void {
   isImeComposing.value = false
 }
 
+function getFileMentionMatch(text: string, cursor: number): { startIndex: number; query: string } | null {
+  const beforeCursor = text.slice(0, cursor)
+  const match = beforeCursor.match(/(^|\s)(@[^\s@]*)$/)
+  if (!match) return null
+  const mentionToken = match[2] ?? ''
+  return {
+    startIndex: cursor - mentionToken.length,
+    query: mentionToken.slice(1),
+  }
+}
+
+function openFileMentionPicker(): void {
+  if (isInteractionDisabled.value) return
+  const input = inputRef.value
+  if (!input) return
+  isAttachMenuOpen.value = false
+  isSlashMenuOpen.value = false
+  menuMode.value = null
+
+  const selectionStart = input.selectionStart ?? draft.value.length
+  const selectionEnd = input.selectionEnd ?? selectionStart
+  const existingMention = getFileMentionMatch(draft.value, selectionStart)
+  if (existingMention) {
+    mentionStartIndex.value = existingMention.startIndex
+    mentionQuery.value = existingMention.query
+    isFileMentionOpen.value = true
+    void queueFileMentionSearch()
+    nextTick(() => input.focus())
+    return
+  }
+  const before = draft.value.slice(0, selectionStart)
+  const after = draft.value.slice(selectionEnd)
+  const previousChar = before.slice(-1)
+  const needsLeadingSpace = before.length > 0 && !/\s/.test(previousChar)
+  const insertion = `${needsLeadingSpace ? ' ' : ''}@`
+  const nextCursor = before.length + insertion.length
+
+  draft.value = `${before}${insertion}${after}`
+
+  nextTick(() => {
+    const activeInput = inputRef.value
+    if (!activeInput) return
+    activeInput.focus()
+    activeInput.setSelectionRange(nextCursor, nextCursor)
+    updateFileMentionState()
+  })
+}
+
 function isImeConfirmEnter(event: KeyboardEvent): boolean {
   if (event.key !== 'Enter') {
     return false
@@ -1795,25 +2053,29 @@ function updateFileMentionState(): void {
     return
   }
   const cursor = input.selectionStart ?? draft.value.length
-  const beforeCursor = draft.value.slice(0, cursor)
-  const match = beforeCursor.match(/(^|\s)(@[^\s@]*)$/)
-  if (!match) {
+  const mentionMatch = getFileMentionMatch(draft.value, cursor)
+  if (!mentionMatch) {
     closeFileMention()
     return
   }
-
-  const mentionToken = match[2] ?? ''
-  const mentionOffset = mentionToken.length
-  const startIndex = cursor - mentionOffset
-  mentionStartIndex.value = startIndex
-  mentionQuery.value = mentionToken.slice(1)
+  mentionStartIndex.value = mentionMatch.startIndex
+  mentionQuery.value = mentionMatch.query
   isFileMentionOpen.value = true
+  const cwd = normalizeComposerPath(props.cwd ?? '')
+  if (cwd) {
+    const immediateRows = getImmediateFileMentionSuggestions(cwd, mentionQuery.value)
+    if (immediateRows.length > 0 || mentionQuery.value.trim().length === 0) {
+      fileMentionSuggestions.value = immediateRows
+      fileMentionHighlightedIndex.value = 0
+    }
+    void prewarmFileMentionSuggestions(cwd)
+  }
   void queueFileMentionSearch()
 }
 
 async function queueFileMentionSearch(): Promise<void> {
   if (!isFileMentionOpen.value) return
-  const cwd = (props.cwd ?? '').trim()
+  const cwd = normalizeComposerPath(props.cwd ?? '')
   if (!cwd) {
     fileMentionSuggestions.value = []
     return
@@ -1824,15 +2086,24 @@ async function queueFileMentionSearch(): Promise<void> {
   const token = ++fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(async () => {
     try {
-      const rows = await searchComposerFiles(cwd, mentionQuery.value, 20)
+      const recentPaths = loadRecentMentionPaths(cwd)
+      const rows = await searchComposerFiles(cwd, mentionQuery.value, 20, recentPaths)
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
       fileMentionHighlightedIndex.value = 0
+      const existingWarmRows = getWarmComposerSuggestionCacheEntry(cwd)?.rows ?? []
+      setWarmComposerSuggestionCacheEntry(cwd, {
+        rows: mentionQuery.value.trim().length === 0
+          ? (existingWarmRows.length > rows.length ? existingWarmRows : rows)
+          : (existingWarmRows.length > 0 ? existingWarmRows : rows),
+        warmedAtMs: Date.now(),
+        pending: null,
+      })
     } catch {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = []
     }
-  }, 120)
+  }, mentionQuery.value.trim().length === 0 ? EMPTY_FILE_MENTION_DEBOUNCE_MS : FILE_MENTION_DEBOUNCE_MS)
 }
 
 function applyFileMention(suggestion: ComposerFileSuggestion): void {
@@ -1842,7 +2113,8 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
     const cursor = input.selectionStart ?? draft.value.length
     draft.value = `${draft.value.slice(0, start)}${draft.value.slice(cursor)}`.trimEnd()
   }
-  addFileAttachment(suggestion.path)
+  addFileAttachment(suggestion.path, undefined, suggestion.kind)
+  rememberRecentMentionEntry({ path: suggestion.path, kind: suggestion.kind })
   closeFileMention()
   nextTick(() => input?.focus())
 }
@@ -2058,11 +2330,16 @@ watch([draft, selectedImages, fileAttachments, selectedSkills], () => {
 
 watch(
   () => props.cwd,
-  () => {
+  (nextCwd) => {
+    const normalizedCwd = normalizeComposerPath(nextCwd ?? '')
+    if (normalizedCwd) {
+      void prewarmFileMentionSuggestions(normalizedCwd)
+    }
     if (isFileMentionOpen.value) {
       void queueFileMentionSearch()
     }
   },
+  { immediate: true },
 )
 
 watch(
@@ -2152,6 +2429,10 @@ watch(
 
 .thread-composer-file-chip-icon {
   @apply h-3.5 w-3.5 text-zinc-400 shrink-0;
+}
+
+.thread-composer-file-chip-icon--folder {
+  @apply text-amber-600;
 }
 
 .thread-composer-file-chip-name {
@@ -2247,6 +2528,18 @@ watch(
 
 .thread-composer-file-mentions {
   @apply absolute left-0 right-0 bottom-[calc(100%+8px)] z-40 max-h-52 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
+}
+
+.thread-composer-file-mentions-header {
+  @apply px-2 pb-1.5 pt-1 text-[11px] text-zinc-500;
+}
+
+.thread-composer-file-mentions-title {
+  @apply block font-medium text-zinc-700;
+}
+
+.thread-composer-file-mentions-hint {
+  @apply mt-0.5 block;
 }
 
 .thread-composer-file-mention-row {
@@ -2422,6 +2715,10 @@ watch(
   @apply inline-flex h-7 shrink-0 items-center border-0 bg-transparent p-0 text-sm leading-none text-zinc-500 transition hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-400;
 }
 
+.thread-composer-command-button--mention {
+  @apply h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 p-0 font-semibold text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900;
+}
+
 .thread-composer-actions {
   @apply ml-auto flex min-w-0 items-center gap-2;
 }
@@ -2547,6 +2844,10 @@ watch(
 
   .thread-composer-command-button {
     @apply inline-flex h-7 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 text-[12px] font-medium text-zinc-700;
+  }
+
+  .thread-composer-command-button--mention {
+    @apply h-8 w-8 px-0 text-[15px];
   }
 
   .thread-composer-context-badge {
