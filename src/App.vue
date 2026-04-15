@@ -261,7 +261,7 @@
           </template>
           <template #actions>
             <button
-              v-if="route.name === 'thread' && selectedThreadId"
+              v-if="route.name === 'thread' && selectedThreadId && !isMobile"
               type="button"
               class="content-header-review-button"
               :data-active="isReviewPaneOpen"
@@ -478,7 +478,7 @@
                   :codex-quota="codexQuota"
                   :show-compact="false"
                   :is-turn-in-progress="false"
-                  :is-interrupting-turn="false" :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
+                  :is-interrupting-turn="false" :send-with-enter="effectiveSendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
                   @submit="onSubmitThreadMessage"
@@ -548,7 +548,7 @@
                       :skills="installedSkills"
                       :show-compact="false"
                       :is-turn-in-progress="false"
-                      :send-with-enter="sendWithEnter"
+                      :send-with-enter="effectiveSendWithEnter"
                       :in-progress-submit-mode="inProgressSendMode"
                       :dictation-click-to-toggle="dictationClickToToggle"
                       :dictation-auto-send="dictationAutoSend"
@@ -589,7 +589,7 @@
                     :is-turn-in-progress="isSelectedThreadInProgress" :is-thread-busy="isSelectedThreadBusy"
                     :busy-phase="selectedThreadBusyPhase" :is-interrupting-turn="isInterruptingTurn"
                     :has-queue-above="selectedThreadQueuedMessages.length > 0"
-                    :send-with-enter="sendWithEnter" :in-progress-submit-mode="inProgressSendMode"
+                    :send-with-enter="effectiveSendWithEnter" :in-progress-submit-mode="inProgressSendMode"
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
@@ -916,6 +916,7 @@ const chatWidth = ref<ChatWidthMode>(loadChatWidthPref())
 const dictationClickToToggle = ref(loadBoolPref(DICTATION_CLICK_TO_TOGGLE_KEY, false))
 const dictationAutoSend = ref(loadBoolPref(DICTATION_AUTO_SEND_KEY, true))
 const dictationLanguage = ref(loadDictationLanguagePref())
+const effectiveSendWithEnter = computed(() => !isMobile.value && sendWithEnter.value)
 const isCreateFolderOpen = ref(false)
 const createFolderDraft = ref('')
 const createFolderError = ref('')
@@ -2782,7 +2783,7 @@ async function submitFirstMessageForNewThread(
   }
 
   .content-header-review-button {
-    @apply px-2 py-1 text-[10px];
+    @apply hidden;
   }
 }
 

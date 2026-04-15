@@ -156,6 +156,30 @@
         }"
       >
           <div v-if="!isDictationRecording" class="thread-composer-primary-controls">
+          <div v-if="!isInlineEdit" class="thread-composer-runtime-controls">
+            <ComposerDropdown
+              ref="modelDropdownRef"
+              class="thread-composer-control thread-composer-control--model"
+              :model-value="selectedModel"
+              :options="modelOptions"
+              :selected-prefix-icon="showFastModeModelIcon ? IconTablerBolt : null"
+              placeholder="Model"
+              open-direction="up"
+              :disabled="disabled || !activeThreadId || models.length === 0"
+              @update:model-value="onModelSelect"
+            />
+
+            <ComposerDropdown
+              class="thread-composer-control thread-composer-control--reasoning"
+              :model-value="selectedReasoningEffort"
+              :options="reasoningOptions"
+              placeholder="Thinking"
+              open-direction="up"
+              :disabled="disabled || !activeThreadId"
+              @update:model-value="onReasoningEffortSelect"
+            />
+          </div>
+
           <div ref="attachMenuRootRef" class="thread-composer-attach">
             <button
               class="thread-composer-attach-trigger"
@@ -263,53 +287,31 @@
             </div>
           </div>
 
-          <ComposerDropdown
-            v-if="!isInlineEdit"
-            ref="modelDropdownRef"
-            class="thread-composer-control thread-composer-control--model"
-            :model-value="selectedModel"
-            :options="modelOptions"
-            :selected-prefix-icon="showFastModeModelIcon ? IconTablerBolt : null"
-            placeholder="Model"
-            open-direction="up"
-            :disabled="disabled || !activeThreadId || models.length === 0"
-            @update:model-value="onModelSelect"
-          />
+          <div v-if="!isInlineEdit && (showCompactButton || contextUsageSummaryText)" class="thread-composer-meta-controls">
+            <button
+              v-if="showCompactButton"
+              class="thread-composer-command-button"
+              type="button"
+              :disabled="disabled || !activeThreadId || isThreadBusyComputed"
+              aria-label="Compact thread context"
+              :title="compactButtonTitle"
+              @click="emit('compact')"
+            >
+              Compact
+            </button>
 
-          <ComposerDropdown
-            v-if="!isInlineEdit"
-            class="thread-composer-control thread-composer-control--reasoning"
-            :model-value="selectedReasoningEffort"
-            :options="reasoningOptions"
-            placeholder="Thinking"
-            open-direction="up"
-            :disabled="disabled || !activeThreadId"
-            @update:model-value="onReasoningEffortSelect"
-          />
-
-          <button
-            v-if="showCompactButton && !isInlineEdit"
-            class="thread-composer-command-button"
-            type="button"
-            :disabled="disabled || !activeThreadId || isThreadBusyComputed"
-            aria-label="Compact thread context"
-            :title="compactButtonTitle"
-            @click="emit('compact')"
-          >
-            Compact
-          </button>
-
-          <span
-            v-if="contextUsageSummaryText && !isInlineEdit"
-            class="thread-composer-context-badge"
-            :class="{
-              'is-warning': contextUsageTone === 'warning',
-              'is-danger': contextUsageTone === 'danger',
-            }"
-            :title="contextUsageTooltipText"
-          >
-            {{ contextUsageSummaryText }}
-          </span>
+            <span
+              v-if="contextUsageSummaryText"
+              class="thread-composer-context-badge"
+              :class="{
+                'is-warning': contextUsageTone === 'warning',
+                'is-danger': contextUsageTone === 'danger',
+              }"
+              :title="contextUsageTooltipText"
+            >
+              {{ contextUsageSummaryText }}
+            </span>
+          </div>
         </div>
 
         <div
@@ -628,8 +630,6 @@ let lastActiveThreadId = ''
 const warmComposerSuggestionCacheByCwd = new Map<string, WarmComposerSuggestionCacheEntry>()
 
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
-  { value: 'none', label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
@@ -2574,6 +2574,14 @@ watch(
   @apply min-w-0 flex flex-1 items-center gap-2 sm:gap-4;
 }
 
+.thread-composer-runtime-controls {
+  @apply min-w-0 flex flex-1 items-center gap-2 sm:gap-4;
+}
+
+.thread-composer-meta-controls {
+  @apply min-w-0 flex shrink-0 items-center gap-2;
+}
+
 .thread-composer-attach {
   @apply relative shrink-0;
 }
@@ -2730,27 +2738,36 @@ watch(
 
 @media (max-width: 639px) {
   .thread-composer-shell {
-    @apply rounded-[1.35rem] px-1.5 py-1;
+    @apply rounded-[1.6rem] border-zinc-200 bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_rgba(15,23,42,0.08)];
+    backdrop-filter: blur(12px);
   }
 
   .thread-composer-input {
-    @apply min-h-8 max-h-24 px-0.5 py-1 text-[14px] leading-5;
+    @apply min-h-9 max-h-28 px-0.5 py-1.5 text-[15px] leading-6;
   }
 
   .thread-composer-controls {
-    @apply mt-1 flex-wrap items-center gap-x-1 gap-y-1;
+    @apply mt-1.5 flex-col items-stretch gap-2;
   }
 
   .thread-composer-primary-controls {
-    @apply w-full flex-wrap gap-1;
+    @apply w-full flex-col items-stretch gap-2;
+  }
+
+  .thread-composer-runtime-controls {
+    @apply grid w-full grid-cols-2 gap-2;
+  }
+
+  .thread-composer-meta-controls {
+    @apply flex w-full items-center gap-2;
   }
 
   .thread-composer-attach {
-    @apply order-1;
+    @apply order-2;
   }
 
   .thread-composer-attach-trigger {
-    @apply h-8 w-8 rounded-full border border-zinc-200 bg-zinc-50 text-[22px];
+    @apply h-9 w-9 rounded-full border border-zinc-200 bg-zinc-50 text-[22px] text-zinc-700 shadow-sm;
   }
 
   .thread-composer-attach-menu {
@@ -2762,8 +2779,7 @@ watch(
   }
 
   .thread-composer-control {
-    flex: 1 1 calc(50% - 0.25rem);
-    min-width: min(10rem, calc(50vw - 1rem));
+    min-width: 0;
   }
 
   .thread-composer-control--skills {
@@ -2777,7 +2793,7 @@ watch(
 
   .thread-composer-control :deep(.composer-dropdown-trigger),
   .thread-composer-control :deep(.search-dropdown-trigger) {
-    @apply h-8 w-full min-w-0 items-center justify-between rounded-full border border-zinc-200 bg-zinc-50 px-2.5 text-[13px] text-zinc-700;
+    @apply h-9 w-full min-w-0 items-center justify-between rounded-2xl border border-zinc-200 bg-zinc-50 px-3 text-[13px] text-zinc-700 shadow-sm;
   }
 
   .thread-composer-control :deep(.composer-dropdown-value),
@@ -2791,21 +2807,21 @@ watch(
   }
 
   .thread-composer-command-button {
-    @apply inline-flex h-7 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 text-[12px] font-medium text-zinc-700;
+    @apply inline-flex h-8 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-3 text-[12px] font-medium text-zinc-700 shadow-sm;
   }
 
   .thread-composer-context-badge {
-    @apply h-7 px-1.5 text-[11px];
+    @apply h-8 px-2.5 text-[11px] shadow-sm;
   }
 
   .thread-composer-actions {
-    @apply ml-0 w-full justify-end gap-1 pt-0;
+    @apply ml-0 w-full justify-end gap-2 pt-0;
   }
 
   .thread-composer-mic,
   .thread-composer-submit,
   .thread-composer-stop {
-    @apply h-8 w-8;
+    @apply h-10 w-10 shadow-sm;
   }
 }
 </style>
