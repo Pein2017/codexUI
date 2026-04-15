@@ -291,14 +291,23 @@
             <button
               v-if="showCompactButton"
               class="thread-composer-command-button"
+              :class="{ 'is-busy': isCompacting }"
               type="button"
               :disabled="disabled || !activeThreadId || isThreadBusyComputed"
               aria-label="Compact thread context"
               :title="compactButtonTitle"
               @click="emit('compact')"
             >
-              Compact
+              {{ compactButtonLabel }}
             </button>
+
+            <span
+              v-if="isCompacting"
+              class="thread-composer-compact-status-badge"
+              aria-live="polite"
+            >
+              Compacting…
+            </span>
 
             <span
               v-if="contextUsageSummaryText"
@@ -750,11 +759,13 @@ const isThreadBusyComputed = computed(() => props.isThreadBusy === true || props
 const hasSelectedThreadContext = computed(() =>
   showCompactButton.value && props.activeThreadId.trim().length > 0,
 )
+const isCompacting = computed(() => props.busyPhase === 'compacting')
 const canUseGlobalSlashControls = computed(() =>
   !props.disabled && props.activeThreadId.trim().length > 0 && !isInlineEdit.value,
 )
+const compactButtonLabel = computed(() => isCompacting.value ? 'Compacting…' : 'Compact')
 const compactButtonTitle = computed(() =>
-  props.busyPhase === 'compacting'
+  isCompacting.value
     ? 'Compacting is already in progress'
     : isThreadBusyComputed.value
       ? 'Compact is unavailable while this thread is busy'
@@ -2675,6 +2686,14 @@ watch(
   @apply inline-flex h-7 shrink-0 items-center border-0 bg-transparent p-0 text-sm leading-none text-zinc-500 transition hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-400;
 }
 
+.thread-composer-command-button.is-busy {
+  @apply text-amber-700 hover:text-amber-700 disabled:text-amber-700;
+}
+
+.thread-composer-compact-status-badge {
+  @apply inline-flex h-7 shrink-0 items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 text-xs font-semibold text-amber-700;
+}
+
 .thread-composer-actions {
   @apply ml-auto flex min-w-0 items-center gap-2;
 }
@@ -2808,6 +2827,14 @@ watch(
 
   .thread-composer-command-button {
     @apply inline-flex h-8 shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-50 px-3 text-[12px] font-medium text-zinc-700 shadow-sm;
+  }
+
+  .thread-composer-command-button.is-busy {
+    @apply border-amber-200 bg-amber-50 text-amber-700;
+  }
+
+  .thread-composer-compact-status-badge {
+    @apply h-8 px-2.5 text-[11px] shadow-sm;
   }
 
   .thread-composer-context-badge {

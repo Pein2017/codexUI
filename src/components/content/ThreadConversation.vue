@@ -895,6 +895,7 @@
               type="button"
               class="runtime-stage-chip"
               :data-expanded="isLiveStageSummaryExpanded(stageMessage)"
+              :aria-expanded="isLiveStageSummaryExpanded(stageMessage)"
               @click="toggleLiveStageSummary(stageMessage)"
             >
               <span class="runtime-stage-chip-label">{{ liveStageSummaryLabel(stageMessage) }}</span>
@@ -917,7 +918,21 @@
               class="reasoning-card-markdown stage-summary-reasoning"
               v-html="renderMarkdownBlocksAsHtmlCached(liveStageSummaryReasoning(stageMessage))"
             />
-            <ul v-if="liveStageSummaryDetails(stageMessage).length > 0" class="live-overlay-activity-list stage-summary-detail-list">
+            <button
+              v-if="liveStageSummaryDetails(stageMessage).length > 0"
+              type="button"
+              class="runtime-disclosure-row"
+              :data-expanded="isLiveStageSectionExpanded(stageMessage, 'details')"
+              :aria-expanded="isLiveStageSectionExpanded(stageMessage, 'details')"
+              @click="toggleLiveStageSection(stageMessage, 'details')"
+            >
+              <span class="runtime-disclosure-label">Details</span>
+              <span class="runtime-disclosure-meta">{{ liveStageSummaryDetailsSummary(stageMessage) }}</span>
+            </button>
+            <ul
+              v-if="isLiveStageSectionExpanded(stageMessage, 'details') && liveStageSummaryDetails(stageMessage).length > 0"
+              class="live-overlay-activity-list stage-summary-detail-list"
+            >
               <li
                 v-for="(detail, detailIndex) in liveStageSummaryDetails(stageMessage)"
                 :key="`stage-detail:${stageMessage.id}:${detailIndex}:${detail}`"
@@ -926,7 +941,21 @@
                 {{ detail }}
               </li>
             </ul>
-            <section v-if="liveStageSummaryBackgroundAgents(stageMessage).length > 0" class="live-overlay-agents stage-summary-agents">
+            <button
+              v-if="liveStageSummaryBackgroundAgents(stageMessage).length > 0"
+              type="button"
+              class="runtime-disclosure-row"
+              :data-expanded="isLiveStageSectionExpanded(stageMessage, 'agents')"
+              :aria-expanded="isLiveStageSectionExpanded(stageMessage, 'agents')"
+              @click="toggleLiveStageSection(stageMessage, 'agents')"
+            >
+              <span class="runtime-disclosure-label">Background agents</span>
+              <span class="runtime-disclosure-meta">{{ liveStageSummaryBackgroundAgentSummary(stageMessage) }}</span>
+            </button>
+            <section
+              v-if="isLiveStageSectionExpanded(stageMessage, 'agents') && liveStageSummaryBackgroundAgents(stageMessage).length > 0"
+              class="live-overlay-agents stage-summary-agents"
+            >
               <div class="live-overlay-agents-header">
                 <span class="live-overlay-agents-title">
                   {{ liveStageSummaryBackgroundAgents(stageMessage).length }} background agents
@@ -1213,7 +1242,21 @@
                 <p v-if="liveOverlaySecondarySummary" class="live-overlay-summary live-overlay-summary-secondary">
                   {{ liveOverlaySecondarySummary }}
                 </p>
-                <ul v-if="liveOverlayDetailList.length > 0" class="live-overlay-activity-list">
+                <button
+                  v-if="liveOverlayDetailList.length > 0"
+                  type="button"
+                  class="runtime-disclosure-row"
+                  :data-expanded="isLiveOverlaySectionExpanded('details')"
+                  :aria-expanded="isLiveOverlaySectionExpanded('details')"
+                  @click="toggleLiveOverlaySection('details')"
+                >
+                  <span class="runtime-disclosure-label">Details</span>
+                  <span class="runtime-disclosure-meta">{{ liveOverlayDetailsSummary }}</span>
+                </button>
+                <ul
+                  v-if="isLiveOverlaySectionExpanded('details') && liveOverlayDetailList.length > 0"
+                  class="live-overlay-activity-list"
+                >
                   <li
                     v-for="(detail, detailIndex) in liveOverlayDetailList"
                     :key="`live-detail:${detailIndex}:${detail}`"
@@ -1222,7 +1265,21 @@
                     {{ detail }}
                   </li>
                 </ul>
-                <section v-if="liveOverlay.backgroundAgents.length > 0" class="live-overlay-agents">
+                <button
+                  v-if="liveOverlay.backgroundAgents.length > 0"
+                  type="button"
+                  class="runtime-disclosure-row"
+                  :data-expanded="isLiveOverlaySectionExpanded('agents')"
+                  :aria-expanded="isLiveOverlaySectionExpanded('agents')"
+                  @click="toggleLiveOverlaySection('agents')"
+                >
+                  <span class="runtime-disclosure-label">Background agents</span>
+                  <span class="runtime-disclosure-meta">{{ liveOverlayBackgroundAgentSummary }}</span>
+                </button>
+                <section
+                  v-if="isLiveOverlaySectionExpanded('agents') && liveOverlay.backgroundAgents.length > 0"
+                  class="live-overlay-agents"
+                >
                   <div class="live-overlay-agents-header">
                     <span class="live-overlay-agents-title">
                       {{ liveOverlay.backgroundAgents.length }} background agents
@@ -1569,9 +1626,11 @@ const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedLiveStageSummaryIds = ref<Set<string>>(new Set())
+const expandedLiveStageSectionIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedLivePlanMessageId = ref('')
 const expandedLiveOverlayTurnId = ref('')
+const expandedLiveOverlaySectionIds = ref<Set<string>>(new Set())
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
 const activeDiffViewerChangeKey = ref('')
 const isDiffViewerFileListOpen = ref(false)
@@ -1714,8 +1773,21 @@ const isLiveTurnRuntime = computed(() =>
   Boolean(props.liveOverlay) || activeToolMessageId.value.length > 0 || hasLiveAssistantText.value,
 )
 
+const hasExpandableLiveOverlayContent = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return false
+  return (
+    liveOverlayPrimarySummary.value.length > 0
+    || liveOverlaySecondarySummary.value.length > 0
+    || liveOverlayDetailList.value.length > 0
+    || overlay.backgroundAgents.length > 0
+    || overlay.reasoningText.trim().length > 0
+    || overlay.errorText.trim().length > 0
+  )
+})
+
 const canCompactLiveOverlay = computed(() =>
-  Boolean(props.liveOverlay) && hasLiveAssistantText.value && activeRuntimeTurnId.value.length > 0,
+  Boolean(props.liveOverlay) && activeRuntimeTurnId.value.length > 0 && hasExpandableLiveOverlayContent.value,
 )
 
 const isLiveOverlayCompact = computed(() =>
@@ -2046,6 +2118,34 @@ function isLiveStageSummaryExpanded(message: UiMessage): boolean {
   return expandedLiveStageSummaryIds.value.has(message.id)
 }
 
+type RuntimeDisclosureSection = 'details' | 'agents'
+
+function runtimeSectionKey(scopeId: string, section: RuntimeDisclosureSection): string {
+  return `${scopeId}::${section}`
+}
+
+function summarizeDisclosureItems(items: string[]): string {
+  const normalized = items
+    .map((item) => normalizeCompactPreviewText(item))
+    .filter((item) => item.length > 0)
+  if (normalized.length === 0) return ''
+  const preview = normalized.slice(0, 2).join(' · ')
+  if (normalized.length <= 2) return preview
+  return `${preview} · +${normalized.length - 2}`
+}
+
+function toggleLiveStageSection(message: UiMessage, section: RuntimeDisclosureSection): void {
+  const next = new Set(expandedLiveStageSectionIds.value)
+  const key = runtimeSectionKey(message.id, section)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedLiveStageSectionIds.value = next
+}
+
+function isLiveStageSectionExpanded(message: UiMessage, section: RuntimeDisclosureSection): boolean {
+  return expandedLiveStageSectionIds.value.has(runtimeSectionKey(message.id, section))
+}
+
 function liveStageSummaryLabel(message: UiMessage): string {
   return message.liveStageSummary?.label || 'Stage'
 }
@@ -2058,8 +2158,16 @@ function liveStageSummaryDetails(message: UiMessage): string[] {
   return message.liveStageSummary?.details ?? []
 }
 
+function liveStageSummaryDetailsSummary(message: UiMessage): string {
+  return summarizeDisclosureItems(liveStageSummaryDetails(message))
+}
+
 function liveStageSummaryBackgroundAgents(message: UiMessage): BackgroundAgentRow[] {
   return (message.liveStageSummary?.backgroundAgents ?? []) as BackgroundAgentRow[]
+}
+
+function liveStageSummaryBackgroundAgentSummary(message: UiMessage): string {
+  return formatBackgroundAgentSummary(liveStageSummaryBackgroundAgents(message))
 }
 
 function liveStageSummaryMeta(message: UiMessage): string {
@@ -2139,6 +2247,33 @@ function normalizeShellCommandPreview(command: string): string {
     .replace(/['"]+$/u, '')
     .trim()
   return normalized
+}
+
+function formatBackgroundAgentSummary(agents: BackgroundAgentRow[]): string {
+  if (agents.length === 0) return ''
+  const completedCount = agents.filter((agent) => agent.status === 'completed').length
+  const workingCount = agents.filter((agent) => agent.status === 'running' || agent.status === 'working').length
+  const parts = [agents.length === 1 ? '1 agent' : `${agents.length} agents`]
+  if (workingCount > 0) parts.push(workingCount === 1 ? '1 working' : `${workingCount} working`)
+  else if (completedCount > 0) parts.push(completedCount === 1 ? '1 done' : `${completedCount} done`)
+  return parts.join(' · ')
+}
+
+function liveOverlaySectionKey(section: RuntimeDisclosureSection): string {
+  const scopeId = activeRuntimeTurnId.value || props.liveOverlay?.activityLabel || 'live-overlay'
+  return runtimeSectionKey(scopeId, section)
+}
+
+function toggleLiveOverlaySection(section: RuntimeDisclosureSection): void {
+  const next = new Set(expandedLiveOverlaySectionIds.value)
+  const key = liveOverlaySectionKey(section)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedLiveOverlaySectionIds.value = next
+}
+
+function isLiveOverlaySectionExpanded(section: RuntimeDisclosureSection): boolean {
+  return expandedLiveOverlaySectionIds.value.has(liveOverlaySectionKey(section))
 }
 
 function formatReasoningEffortLabel(reasoningEffort: string): string {
@@ -2687,6 +2822,13 @@ const liveOverlaySecondarySummary = computed(() => {
 const liveOverlayDetailList = computed(() => {
   if (liveOverlaySecondarySummary.value) return [] as string[]
   return liveOverlayExtraDetails.value
+})
+
+const liveOverlayDetailsSummary = computed(() => summarizeDisclosureItems(liveOverlayDetailList.value))
+
+const liveOverlayBackgroundAgentSummary = computed(() => {
+  const overlay = props.liveOverlay
+  return overlay ? formatBackgroundAgentSummary(overlay.backgroundAgents as BackgroundAgentRow[]) : ''
 })
 
 function toggleLiveOverlayExpand(): void {
@@ -5092,6 +5234,7 @@ watch(
     if (nextTurnId === previousTurnId) return
     expandedLivePlanMessageId.value = ''
     expandedLiveOverlayTurnId.value = ''
+    expandedLiveOverlaySectionIds.value = new Set()
   },
 )
 
@@ -5122,6 +5265,16 @@ watch(
           .filter((message) => isLiveStageSummaryMessage(message))
           .map((message) => message.id),
       ),
+    )
+    const liveStageSummaryIds = new Set(
+      next
+        .filter((message) => isLiveStageSummaryMessage(message))
+        .map((message) => message.id),
+    )
+    expandedLiveStageSectionIds.value = new Set(
+      [...expandedLiveStageSectionIds.value].filter((key) => (
+        [...liveStageSummaryIds].some((id) => key.startsWith(`${id}::`))
+      )),
     )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
@@ -5471,7 +5624,12 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-toggle-button {
-  @apply inline-flex items-center rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] leading-4 text-zinc-400 transition hover:text-zinc-600;
+  @apply inline-flex cursor-pointer select-none items-center gap-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] leading-4 text-zinc-400 transition hover:text-zinc-700 focus-visible:text-zinc-700;
+}
+
+.live-overlay-toggle-button::after {
+  content: '▾';
+  @apply text-[13px] leading-4 text-zinc-400;
 }
 
 .live-overlay-activity-list {
@@ -6217,11 +6375,11 @@ onBeforeUnmount(() => {
 }
 
 .runtime-stage-chip {
-  @apply inline-flex max-w-full items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left text-[12px] leading-5 text-zinc-400 transition hover:text-zinc-600;
+  @apply inline-flex max-w-full cursor-pointer select-none items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left text-[12px] leading-5 text-zinc-400 transition hover:text-zinc-700 focus-visible:text-zinc-700;
 }
 
 .runtime-stage-chip[data-expanded='true'] {
-  @apply text-zinc-600;
+  @apply text-zinc-700;
 }
 
 .runtime-stage-chip-label {
@@ -6234,16 +6392,42 @@ onBeforeUnmount(() => {
 
 .runtime-stage-chip::after {
   content: '▾';
-  @apply text-[10px] leading-4 text-zinc-300;
+  @apply text-[13px] leading-4 text-zinc-400;
 }
 
 .runtime-stage-chip[data-expanded='true']::after {
-  @apply text-zinc-400;
+  @apply text-zinc-500;
   transform: rotate(180deg);
 }
 
 .runtime-stage-panel {
   @apply flex w-full max-w-[min(var(--chat-column-max,45rem),100%)] flex-col gap-1.5 pl-4 pt-0;
+}
+
+.runtime-disclosure-row {
+  @apply inline-flex w-full cursor-pointer select-none items-center gap-2 border-none bg-transparent px-0 py-0 text-left text-[12px] leading-5 text-zinc-400 transition hover:text-zinc-700 focus-visible:text-zinc-700;
+}
+
+.runtime-disclosure-row[data-expanded='true'] {
+  @apply text-zinc-700;
+}
+
+.runtime-disclosure-row::after {
+  content: '▾';
+  @apply ml-auto text-[13px] leading-4 text-zinc-400;
+}
+
+.runtime-disclosure-row[data-expanded='true']::after {
+  @apply text-zinc-500;
+  transform: rotate(180deg);
+}
+
+.runtime-disclosure-label {
+  @apply font-normal text-zinc-500;
+}
+
+.runtime-disclosure-meta {
+  @apply truncate text-zinc-400;
 }
 
 @media (max-width: 639px) {
@@ -6273,6 +6457,10 @@ onBeforeUnmount(() => {
 
   .runtime-stage-panel {
     @apply w-full max-w-full gap-1 pl-3 pt-0;
+  }
+
+  .runtime-disclosure-row {
+    @apply text-[11px] leading-4;
   }
 }
 
@@ -6310,7 +6498,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-row {
-  @apply w-full flex items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left cursor-pointer transition hover:bg-transparent;
+  @apply w-full flex cursor-pointer select-none items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left transition hover:bg-transparent hover:text-zinc-700 focus-visible:text-zinc-700;
 }
 
 .cmd-row.cmd-row-group {
@@ -6323,7 +6511,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-row.cmd-compact .cmd-chevron {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .cmd-row.cmd-compact .cmd-label {
@@ -6340,7 +6528,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-chevron {
-  @apply text-[10px] text-zinc-400 transition-transform duration-150 flex-shrink-0;
+  @apply text-[13px] text-zinc-400 transition-transform duration-150 flex-shrink-0;
 }
 
 .cmd-chevron-open {

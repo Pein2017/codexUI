@@ -1045,6 +1045,77 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Revert the background-agent summary extension in `src/types/codex.ts`, `src/composables/useDesktopState.ts`, and `src/components/content/ThreadConversation.vue` if the additional runtime metadata is not wanted.
 
+### Feature: Live subagent-heavy runtime sections stay collapsible by default
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can trigger a `Coordinating agents` phase with multiple background agents and at least one completed stage summary that also references background agents or multiple detail lines.
+
+#### Steps
+1. Start a turn that spawns several background agents and keep it open while the live `Coordinating agents` phase is active.
+2. Before any assistant text streams, confirm the live runtime overlay can still be collapsed with its top-right `Open` / `Hide` control instead of forcing the full agent list open.
+3. Expand the live overlay and confirm `Details` and `Background agents` each appear as separate disclosure rows rather than immediately rendering a long bullet list and full agent roster.
+4. Leave both disclosure rows collapsed and confirm the live overlay only occupies a small amount of vertical space.
+5. Expand `Background agents` and confirm the agent list appears on demand, including model/reasoning chips and status rows.
+6. Collapse `Background agents` again and confirm the overlay height shrinks back down immediately.
+7. Open a completed stage summary that includes background agents.
+8. Confirm the stage panel also keeps `Details` and `Background agents` collapsed by default, with only compact disclosure summaries visible.
+9. Expand one of those disclosures and confirm only the requested subsection opens; the rest of the stage panel stays compact.
+
+#### Expected Results
+- Subagent-heavy live overlays no longer dump the full agent roster by default.
+- Completed stage summaries also keep detail-heavy subsections collapsed by default.
+- Users can progressively disclose `Details` and `Background agents` independently, reducing the amount of always-visible runtime chrome.
+- Expanded subsections still preserve the existing agent metadata, status labels, and `Open` thread action.
+
+#### Rollback/Cleanup
+- Revert the nested disclosure changes in `src/components/content/ThreadConversation.vue` if background-agent lists should always be fully expanded.
+
+### Feature: Compacting state is explicitly visible in the composer
+
+#### Prerequisites
+- App is running from this repository.
+- A thread is selected and can be compacted.
+
+#### Steps
+1. Open a thread with the `Compact` control visible in the composer.
+2. Click `Compact`.
+3. Immediately observe the composer meta row without waiting for any delayed live runtime overlay.
+4. Confirm the compact button label changes from `Compact` to `Compacting…`.
+5. Confirm an adjacent compacting status badge also appears with `Compacting…`.
+6. While compaction is still active, confirm sending a new message queues it rather than trying to send immediately.
+7. Wait for compaction to finish and confirm the button label returns to `Compact` and the compacting badge disappears.
+
+#### Expected Results
+- Compaction is explicitly visible in the composer as soon as the action starts.
+- Users do not need to infer compaction from a disabled button alone.
+- The compacting hint disappears automatically when the thread leaves the compacting phase.
+
+#### Rollback/Cleanup
+- Revert the compacting-state composer changes in `src/components/content/ThreadComposer.vue` if the extra badge is not desired.
+
+### Feature: Expandable runtime rows use a clear disclosure hover affordance
+
+#### Prerequisites
+- App is running from this repository.
+- A thread includes at least one expandable runtime row, such as a stage summary, command row, MCP row, collab row, or live overlay disclosure.
+
+#### Steps
+1. Open a thread with visible runtime summaries and hover a stage summary row such as `Explored ...` or `Running command ...`.
+2. Confirm the mouse cursor changes to a pointer and the row text subtly darkens on hover.
+3. Confirm the disclosure arrow at the end of the row is visibly larger than before and easy to spot.
+4. Repeat on a nested disclosure row like `Details` or `Background agents` inside an expanded stage.
+5. Repeat on a command or MCP summary row and confirm it uses the same pointer-and-chevron affordance.
+6. Hover plain detail text that is not itself expandable and confirm it does not look like an interactive disclosure trigger.
+
+#### Expected Results
+- Only truly expandable runtime rows present a clear disclosure affordance.
+- Expandable runtime rows consistently use a visible pointer cursor and a larger arrow indicator.
+- Non-expandable detail text remains visually static and does not compete with interactive rows.
+
+#### Rollback/Cleanup
+- Revert the disclosure affordance styling in `src/components/content/ThreadConversation.vue` if the previous minimal hover styling is preferred.
+
 ### Feature: Prose with slash-separated words no longer becomes broken local file links
 
 #### Prerequisites
