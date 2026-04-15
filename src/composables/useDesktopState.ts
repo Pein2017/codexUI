@@ -75,12 +75,13 @@ const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
 const LEGACY_COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode.v1'
 const NEW_THREAD_COLLABORATION_MODE_CONTEXT = '__new-thread__'
-const EVENT_SYNC_DEBOUNCE_MS = 220
+const EVENT_SYNC_DEBOUNCE_MS = 120
 const RATE_LIMIT_REFRESH_DEBOUNCE_MS = 500
 const TURN_START_FOLLOW_UP_SYNC_DELAY_MS = 3000
-const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.2-codex'
+const THREAD_LIST_REFRESH_TURN_EVENTS = new Set(['turn/started', 'turn/completed'])
 
 function clearLegacyThreadReadStateStorage(): void {
   if (typeof window === 'undefined') return
@@ -666,7 +667,8 @@ function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
     areCollabToolCallsEqual(first.collabToolCall, second.collabToolCall) &&
     arePlanDataEqual(first.plan, second.plan) &&
     first.turnId === second.turnId &&
-    first.turnIndex === second.turnIndex
+    first.turnIndex === second.turnIndex &&
+    first.streamSequence === second.streamSequence
   )
 }
 
@@ -820,6 +822,22 @@ function upsertMessage(previous: UiMessage[], nextMessage: UiMessage): UiMessage
   const next = [...previous]
   next.splice(existingIndex, 1, nextMessage)
   return next
+}
+
+function compareLiveStreamMessages(first: UiMessage, second: UiMessage): number {
+  const firstSequence = typeof first.streamSequence === 'number' ? first.streamSequence : Number.MAX_SAFE_INTEGER
+  const secondSequence = typeof second.streamSequence === 'number' ? second.streamSequence : Number.MAX_SAFE_INTEGER
+  if (firstSequence !== secondSequence) {
+    return firstSequence - secondSequence
+  }
+
+  const firstTurnIndex = typeof first.turnIndex === 'number' ? first.turnIndex : Number.MAX_SAFE_INTEGER
+  const secondTurnIndex = typeof second.turnIndex === 'number' ? second.turnIndex : Number.MAX_SAFE_INTEGER
+  if (firstTurnIndex !== secondTurnIndex) {
+    return firstTurnIndex - secondTurnIndex
+  }
+
+  return first.id.localeCompare(second.id)
 }
 
 type TurnSummaryState = {
@@ -1304,6 +1322,11 @@ export function useDesktopState() {
   let rateLimitRefreshTimer: number | null = null
   const delayedTurnSyncTimerByThreadId = new Map<string, number>()
   const delayedCompactOverlayTimerByThreadId = new Map<string, number>()
+  const resumingThreadPromiseById = new Map<string, Promise<void>>()
+  const liveMessageSequenceByKey = new Map<string, number>()
+  const liveAgentSegmentIndexBySourceKey = new Map<string, number>()
+  const pendingLiveAgentSegmentBreakThreadIds = new Set<string>()
+  let nextLiveMessageSequence = 1
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
   const pendingThreadMessageRefresh = new Set<string>()
@@ -1567,6 +1590,7 @@ export function useDesktopState() {
       && nextOverlay.errorText.trim().length === 0
     )
     if (isBareWritingResponse) return null
+    if (isRuntimeConfigOnlyOverlay(nextOverlay)) return null
 
     return nextOverlay
   })
@@ -1586,8 +1610,10 @@ export function useDesktopState() {
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const liveStages = liveStageSummariesByThreadId.value[threadId] ?? []
+    const liveStream = [...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent]
+      .sort(compareLiveStreamMessages)
     const combined = insertLiveStageSummaryMessages(
-      [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent],
+      [...persisted, ...liveStream],
       liveStages,
     )
 
@@ -1624,6 +1650,146 @@ export function useDesktopState() {
       threadId,
       defaultSpeedMode.value,
     )
+  }
+
+  function liveMessageSequenceKey(threadId: string, messageId: string): string {
+    return `${threadId}:${messageId}`
+  }
+
+  function stampLiveMessageSequence(threadId: string, message: UiMessage): UiMessage {
+    if (!threadId || !message.id) return message
+
+    const key = liveMessageSequenceKey(threadId, message.id)
+    let sequence = liveMessageSequenceByKey.get(key)
+    if (typeof sequence !== 'number') {
+      sequence = nextLiveMessageSequence
+      nextLiveMessageSequence += 1
+      liveMessageSequenceByKey.set(key, sequence)
+    }
+
+    if (message.streamSequence === sequence) {
+      return message
+    }
+
+    return {
+      ...message,
+      streamSequence: sequence,
+    }
+  }
+
+  function clearLiveMessageSequences(threadId: string, messages: UiMessage[]): void {
+    if (!threadId || messages.length === 0) return
+    for (const message of messages) {
+      liveMessageSequenceByKey.delete(liveMessageSequenceKey(threadId, message.id))
+    }
+  }
+
+  function clearRemovedLiveMessageSequences(threadId: string, previous: UiMessage[], next: UiMessage[]): void {
+    if (!threadId || previous.length === 0) return
+    const nextIds = new Set(next.map((message) => message.id))
+    clearLiveMessageSequences(
+      threadId,
+      previous.filter((message) => !nextIds.has(message.id)),
+    )
+  }
+
+  function clearAllLiveMessageSequencesForThread(threadId: string): void {
+    if (!threadId) return
+    clearLiveMessageSequences(threadId, livePlanMessagesByThreadId.value[threadId] ?? [])
+    clearLiveMessageSequences(threadId, liveAgentMessagesByThreadId.value[threadId] ?? [])
+    clearLiveMessageSequences(threadId, liveCommandsByThreadId.value[threadId] ?? [])
+    clearLiveMessageSequences(threadId, liveFileChangeMessagesByThreadId.value[threadId] ?? [])
+  }
+
+  function liveAgentSourceKey(threadId: string, sourceMessageId: string): string {
+    return `${threadId}:${sourceMessageId}`
+  }
+
+  function liveAgentSegmentId(sourceMessageId: string, segmentIndex: number): string {
+    return `${sourceMessageId}::segment::${segmentIndex}`
+  }
+
+  function liveAgentSegmentPrefix(sourceMessageId: string): string {
+    return `${sourceMessageId}::segment::`
+  }
+
+  function listLiveAgentSegments(threadId: string, sourceMessageId: string): UiMessage[] {
+    const prefix = liveAgentSegmentPrefix(sourceMessageId)
+    return (liveAgentMessagesByThreadId.value[threadId] ?? [])
+      .filter((message) => message.id.startsWith(prefix))
+      .sort(compareLiveStreamMessages)
+  }
+
+  function markLiveAgentSegmentBreak(threadId: string): void {
+    if (!threadId) return
+    pendingLiveAgentSegmentBreakThreadIds.add(threadId)
+  }
+
+  function resolveLiveAgentSegmentId(threadId: string, sourceMessageId: string): string {
+    const key = liveAgentSourceKey(threadId, sourceMessageId)
+    const existingSegments = listLiveAgentSegments(threadId, sourceMessageId)
+    let segmentIndex = liveAgentSegmentIndexBySourceKey.get(key) ?? 0
+    const shouldStartNewSegment =
+      segmentIndex === 0
+      || pendingLiveAgentSegmentBreakThreadIds.has(threadId)
+      || existingSegments.length === 0
+
+    if (shouldStartNewSegment) {
+      segmentIndex = existingSegments.length + 1
+      liveAgentSegmentIndexBySourceKey.set(key, segmentIndex)
+      pendingLiveAgentSegmentBreakThreadIds.delete(threadId)
+    }
+
+    return liveAgentSegmentId(sourceMessageId, segmentIndex)
+  }
+
+  function reconcileCompletedLiveAgentMessage(threadId: string, completedMessage: UiMessage): void {
+    if (!threadId || !completedMessage.id) return
+
+    const sourceMessageId = completedMessage.id
+    const existingSegments = listLiveAgentSegments(threadId, sourceMessageId)
+    if (existingSegments.length === 0) {
+      const segmentId = resolveLiveAgentSegmentId(threadId, sourceMessageId)
+      upsertLiveAgentMessage(threadId, {
+        ...completedMessage,
+        id: segmentId,
+      })
+      return
+    }
+
+    const combinedText = existingSegments.map((message) => message.text).join('')
+    const lastSegment = existingSegments[existingSegments.length - 1]
+    if (completedMessage.text.startsWith(combinedText)) {
+      const suffix = completedMessage.text.slice(combinedText.length)
+      if (suffix.length === 0) return
+      upsertLiveAgentMessage(threadId, {
+        ...lastSegment,
+        text: `${lastSegment.text}${suffix}`,
+        turnId: completedMessage.turnId || lastSegment.turnId,
+        turnIndex: completedMessage.turnIndex ?? lastSegment.turnIndex,
+      })
+      return
+    }
+
+    if (existingSegments.length === 1) {
+      upsertLiveAgentMessage(threadId, {
+        ...lastSegment,
+        text: completedMessage.text,
+        turnId: completedMessage.turnId || lastSegment.turnId,
+        turnIndex: completedMessage.turnIndex ?? lastSegment.turnIndex,
+      })
+    }
+  }
+
+  function clearLiveAgentSegmentStateForThread(threadId: string): void {
+    if (!threadId) return
+    pendingLiveAgentSegmentBreakThreadIds.delete(threadId)
+    const prefix = `${threadId}:`
+    for (const key of liveAgentSegmentIndexBySourceKey.keys()) {
+      if (key.startsWith(prefix)) {
+        liveAgentSegmentIndexBySourceKey.delete(key)
+      }
+    }
   }
 
   function setSelectedThreadId(nextThreadId: string): void {
@@ -1790,6 +1956,37 @@ export function useDesktopState() {
     pendingTurnRequestByThreadId.value = omitKey(pendingTurnRequestByThreadId.value, threadId)
   }
 
+  function startThreadResume(threadId: string): Promise<void> | null {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId || resumedThreadById.value[normalizedThreadId] === true) return null
+
+    const existingPromise = resumingThreadPromiseById.get(normalizedThreadId)
+    if (existingPromise) return existingPromise
+
+    const resumePromise = resumeThread(normalizedThreadId)
+      .then(() => {
+        resumedThreadById.value = {
+          ...resumedThreadById.value,
+          [normalizedThreadId]: true,
+        }
+      })
+      .finally(() => {
+        if (resumingThreadPromiseById.get(normalizedThreadId) === resumePromise) {
+          resumingThreadPromiseById.delete(normalizedThreadId)
+        }
+      })
+
+    resumingThreadPromiseById.set(normalizedThreadId, resumePromise)
+    return resumePromise
+  }
+
+  async function ensureThreadResumed(threadId: string): Promise<void> {
+    const resumePromise = startThreadResume(threadId)
+    if (resumePromise) {
+      await resumePromise
+    }
+  }
+
 
 
   async function retryPendingTurnWithFallback(threadId: string): Promise<void> {
@@ -1813,6 +2010,7 @@ export function useDesktopState() {
         setLiveAgentMessagesForThread(threadId, [])
         clearLiveReasoningForThread(threadId)
         if (liveCommandsByThreadId.value[threadId]) {
+          clearLiveMessageSequences(threadId, liveCommandsByThreadId.value[threadId] ?? [])
           liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
         }
       } catch {
@@ -1829,9 +2027,7 @@ export function useDesktopState() {
 
       await ensureSpeedModeApplied(pending.speedMode)
 
-      if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
-      }
+      await ensureThreadResumed(threadId)
 
       await startThreadTurn(
         threadId,
@@ -1843,12 +2039,6 @@ export function useDesktopState() {
         pending.fileAttachments,
         pending.collaborationMode,
       )
-
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [threadId]: true,
-      }
-
       scheduleRateLimitRefresh()
       pendingThreadMessageRefresh.add(threadId)
       pendingThreadsRefresh = true
@@ -1909,7 +2099,7 @@ export function useDesktopState() {
     }
   }
 
-  function buildPendingTurnDetails(
+function buildPendingTurnDetails(
     modelId: string,
     effort: ReasoningEffort | '',
     collaborationMode: CollaborationModeKind = selectedCollaborationMode.value,
@@ -1920,6 +2110,16 @@ export function useDesktopState() {
     const modeLabel = collaborationMode === 'plan' ? 'Plan' : 'Default'
     const speedLabel = speedMode === 'fast' ? 'Fast' : 'Standard'
     return [`Mode: ${modeLabel}`, `Model: ${modelLabel}`, `Thinking: ${effortLabel}`, `Speed: ${speedLabel}`]
+  }
+
+  function isRuntimeConfigOnlyOverlay(overlay: UiLiveOverlay): boolean {
+    if (overlay.activityLabel !== 'Thinking') return false
+    if (overlay.activitySummaryText.trim().length > 0) return false
+    if (overlay.backgroundAgents.length > 0) return false
+    if (overlay.reasoningText.trim().length > 0) return false
+    if (overlay.errorText.trim().length > 0) return false
+    if (overlay.activityDetails.length === 0) return false
+    return overlay.activityDetails.every((detail) => /^(Mode|Model|Thinking|Speed):\s+/u.test(detail.trim()))
   }
 
   async function refreshModelPreferences(): Promise<void> {
@@ -2148,6 +2348,12 @@ export function useDesktopState() {
 
   function pruneThreadScopedState(flatThreads: UiThread[]): void {
     const activeThreadIds = new Set(flatThreads.map((thread) => thread.id))
+    const trackedLiveThreadIds = new Set([
+      ...Object.keys(livePlanMessagesByThreadId.value),
+      ...Object.keys(liveAgentMessagesByThreadId.value),
+      ...Object.keys(liveCommandsByThreadId.value),
+      ...Object.keys(liveFileChangeMessagesByThreadId.value),
+    ])
     const nextSeenState = pruneThreadStateMap(seenUpdatedAtByThreadId.value, activeThreadIds)
     if (nextSeenState !== seenUpdatedAtByThreadId.value) {
       seenUpdatedAtByThreadId.value = nextSeenState
@@ -2172,6 +2378,12 @@ export function useDesktopState() {
     activeLiveStageByThreadId.value = pruneThreadStateMap(activeLiveStageByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
+    for (const threadId of trackedLiveThreadIds) {
+      if (!activeThreadIds.has(threadId)) {
+        clearAllLiveMessageSequencesForThread(threadId)
+        clearLiveAgentSegmentStateForThread(threadId)
+      }
+    }
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
     threadTokenUsageByThreadId.value = pruneThreadStateMap(threadTokenUsageByThreadId.value, activeThreadIds)
@@ -2476,6 +2688,10 @@ export function useDesktopState() {
   function setLiveAgentMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = liveAgentMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+    clearRemovedLiveMessageSequences(threadId, previous, nextMessages)
+    if (nextMessages.length === 0) {
+      clearLiveAgentSegmentStateForThread(threadId)
+    }
     liveAgentMessagesByThreadId.value = {
       ...liveAgentMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -2485,6 +2701,7 @@ export function useDesktopState() {
   function setLiveFileChangeMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+    clearRemovedLiveMessageSequences(threadId, previous, nextMessages)
     liveFileChangeMessagesByThreadId.value = {
       ...liveFileChangeMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -2494,6 +2711,7 @@ export function useDesktopState() {
   function setLivePlanMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = livePlanMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
+    clearRemovedLiveMessageSequences(threadId, previous, nextMessages)
     livePlanMessagesByThreadId.value = {
       ...livePlanMessagesByThreadId.value,
       [threadId]: nextMessages,
@@ -2502,27 +2720,31 @@ export function useDesktopState() {
 
   function clearLiveAgentMessagesForThread(threadId: string): void {
     if (!threadId) return
+    clearLiveMessageSequences(threadId, liveAgentMessagesByThreadId.value[threadId] ?? [])
+    clearLiveAgentSegmentStateForThread(threadId)
     if (!(threadId in liveAgentMessagesByThreadId.value)) return
     liveAgentMessagesByThreadId.value = omitKey(liveAgentMessagesByThreadId.value, threadId)
   }
 
   function upsertLivePlanMessage(threadId: string, nextMessage: UiMessage): void {
     const previous = livePlanMessagesByThreadId.value[threadId] ?? []
-    const next = upsertMessage(previous, nextMessage)
+    const next = upsertMessage(previous, stampLiveMessageSequence(threadId, nextMessage))
     setLivePlanMessagesForThread(threadId, next)
+    markLiveAgentSegmentBreak(threadId)
   }
 
   function upsertLiveAgentMessage(threadId: string, nextMessage: UiMessage): void {
     const previous = liveAgentMessagesByThreadId.value[threadId] ?? []
-    const next = upsertMessage(previous, nextMessage)
+    const next = upsertMessage(previous, stampLiveMessageSequence(threadId, nextMessage))
     setLiveAgentMessagesForThread(threadId, next)
   }
 
   function upsertLiveFileChangeMessage(threadId: string, nextMessage: UiMessage): void {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
-    const next = upsertMessage(previous, nextMessage)
+    const next = upsertMessage(previous, stampLiveMessageSequence(threadId, nextMessage))
     setLiveFileChangeMessagesForThread(threadId, next)
     attachToolMessageToActiveLiveStage(threadId, nextMessage.id)
+    markLiveAgentSegmentBreak(threadId)
   }
 
   function setLiveReasoningText(threadId: string, text: string): void {
@@ -2581,12 +2803,14 @@ export function useDesktopState() {
 
   function clearLivePlansForThread(threadId: string): void {
     if (!threadId) return
+    clearLiveMessageSequences(threadId, livePlanMessagesByThreadId.value[threadId] ?? [])
     if (!(threadId in livePlanMessagesByThreadId.value)) return
     livePlanMessagesByThreadId.value = omitKey(livePlanMessagesByThreadId.value, threadId)
   }
 
   function clearLiveFileChangesForThread(threadId: string): void {
     if (!threadId) return
+    clearLiveMessageSequences(threadId, liveFileChangeMessagesByThreadId.value[threadId] ?? [])
     if (!(threadId in liveFileChangeMessagesByThreadId.value)) return
     liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
   }
@@ -2600,6 +2824,7 @@ export function useDesktopState() {
     clearLiveOverlayTimestamp(threadId)
     setTurnActivityForThread(threadId, null)
     if (liveCommandsByThreadId.value[threadId]) {
+      clearLiveMessageSequences(threadId, liveCommandsByThreadId.value[threadId] ?? [])
       liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
     }
     if (activeTurnIdByThreadId.value[threadId]) {
@@ -3640,10 +3865,11 @@ export function useDesktopState() {
 
   function upsertLiveCommand(threadId: string, msg: UiMessage): void {
     const previous = liveCommandsByThreadId.value[threadId] ?? []
-    const next = upsertMessage(previous, msg)
+    const next = upsertMessage(previous, stampLiveMessageSequence(threadId, msg))
     if (next === previous) return
     liveCommandsByThreadId.value = { ...liveCommandsByThreadId.value, [threadId]: next }
     attachToolMessageToActiveLiveStage(threadId, msg.id)
+    markLiveAgentSegmentBreak(threadId)
   }
 
   function removeLiveCommandsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
@@ -3652,6 +3878,7 @@ export function useDesktopState() {
     const persistedIds = new Set(persistedMessages.map((m) => m.id))
     const next = current.filter((m) => !persistedIds.has(m.id))
     if (next.length === current.length) return
+    clearRemovedLiveMessageSequences(threadId, current, next)
     if (next.length === 0) {
       liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
     } else {
@@ -3679,6 +3906,7 @@ export function useDesktopState() {
       && !(typeof message.turnIndex === 'number' && persistedTurnIndices.has(message.turnIndex))
     ))
     if (next.length === current.length) return
+    clearRemovedLiveMessageSequences(threadId, current, next)
     if (next.length === 0) {
       liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
     } else {
@@ -3871,11 +4099,12 @@ export function useDesktopState() {
 
     const liveAgentMessageDelta = readAgentMessageDelta(notification)
     if (liveAgentMessageDelta) {
+      const segmentId = resolveLiveAgentSegmentId(notificationThreadId, liveAgentMessageDelta.messageId)
       const existing = (liveAgentMessagesByThreadId.value[notificationThreadId] ?? [])
-        .find((message) => message.id === liveAgentMessageDelta.messageId)
+        .find((message) => message.id === segmentId)
       const nextText = `${existing?.text ?? ''}${liveAgentMessageDelta.delta}`
       upsertLiveAgentMessage(notificationThreadId, {
-        id: liveAgentMessageDelta.messageId,
+        id: segmentId,
         role: 'assistant',
         text: nextText,
         messageType: 'agentMessage.live',
@@ -3886,7 +4115,7 @@ export function useDesktopState() {
 
     const completedAgentMessage = readAgentMessageCompleted(notification)
     if (completedAgentMessage) {
-      upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
+      reconcileCompletedLiveAgentMessage(notificationThreadId, completedAgentMessage)
     }
 
     const startedReasoningItemId = readReasoningStartedItemId(notification)
@@ -4044,6 +4273,7 @@ export function useDesktopState() {
       clearLiveReasoningForThread(notificationThreadId)
       clearLiveOverlayTimestamp(notificationThreadId)
       if (liveCommandsByThreadId.value[notificationThreadId]) {
+        clearLiveMessageSequences(notificationThreadId, liveCommandsByThreadId.value[notificationThreadId] ?? [])
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, notificationThreadId)
       }
       const completedThreadId = extractThreadIdFromNotification(notification)
@@ -4071,8 +4301,7 @@ export function useDesktopState() {
     const method = notification.method
     if (
       method.startsWith('thread/') ||
-      method.startsWith('turn/') ||
-      method.startsWith('item/')
+      THREAD_LIST_REFRESH_TURN_EVENTS.has(method)
     ) {
       pendingThreadsRefresh = true
     }
@@ -4212,12 +4441,11 @@ export function useDesktopState() {
     }
 
     try {
-      if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
-        resumedThreadById.value = {
-          ...resumedThreadById.value,
-          [threadId]: true,
-        }
+      const resumePromise = startThreadResume(threadId)
+      if (resumePromise) {
+        void resumePromise.catch(() => {
+          // Showing existing thread content should not wait on background resume success.
+        })
       }
 
       const { messages: nextMessages, inProgress, activeTurnId, turnIndexByTurnId } = await getThreadDetail(threadId)
@@ -4444,6 +4672,7 @@ export function useDesktopState() {
       setLiveAgentMessagesForThread(forkedThreadId, [])
       clearLiveReasoningForThread(forkedThreadId)
       if (liveCommandsByThreadId.value[forkedThreadId]) {
+        clearLiveMessageSequences(forkedThreadId, liveCommandsByThreadId.value[forkedThreadId] ?? [])
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, forkedThreadId)
       }
       setTurnSummaryForThread(forkedThreadId, null)
@@ -4740,9 +4969,7 @@ export function useDesktopState() {
     try {
       await ensureSpeedModeApplied(speedMode)
 
-      if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
-      }
+      await ensureThreadResumed(threadId)
 
       let startedTurnId = ''
       try {
@@ -4963,6 +5190,7 @@ export function useDesktopState() {
       setLiveAgentMessagesForThread(threadId, [])
       clearLiveReasoningForThread(threadId)
       if (liveCommandsByThreadId.value[threadId]) {
+        clearLiveMessageSequences(threadId, liveCommandsByThreadId.value[threadId] ?? [])
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
       }
       setTurnSummaryForThread(threadId, null)
@@ -5307,6 +5535,10 @@ export function useDesktopState() {
     liveFileChangeMessagesByThreadId.value = {}
     liveStageSummariesByThreadId.value = {}
     activeLiveStageByThreadId.value = {}
+    liveMessageSequenceByKey.clear()
+    liveAgentSegmentIndexBySourceKey.clear()
+    pendingLiveAgentSegmentBreakThreadIds.clear()
+    nextLiveMessageSequence = 1
     turnIndexByTurnIdByThreadId.value = {}
     turnActivityByThreadId.value = {}
     turnSummaryByThreadId.value = {}

@@ -12,7 +12,7 @@
     <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
       <template v-for="message in messages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id) && !hiddenWorkedToolIds.has(message.id) && !hiddenLiveRuntimeMessageIds.has(message.id) && !hiddenStageToolIds.has(message.id)"
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id) && !hiddenWorkedToolIds.has(message.id) && !hiddenLiveRuntimeMessageIds.has(message.id) && !hiddenStageToolIds.has(message.id) && !hiddenLiveStageSummaryIds.has(message.id)"
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
@@ -54,7 +54,7 @@
                     @click="toggleCommandExpand(cmd)"
                   >
                     <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                    <code class="cmd-label">{{ cmd.commandExecution?.command || '(command)' }}</code>
+                    <span class="cmd-label">{{ commandSummaryText(cmd) }}</span>
                     <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
                   </button>
                   <div
@@ -99,7 +99,7 @@
                 @click="toggleCommandExpand(message)"
               >
                 <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(message) }">▶</span>
-                <code class="cmd-label">{{ message.commandExecution?.command || '(command)' }}</code>
+                <span class="cmd-label">{{ commandSummaryText(message) }}</span>
                 <span class="cmd-status">{{ commandStatusLabel(message) }}</span>
               </button>
               <div
@@ -146,7 +146,7 @@
               @click="toggleMcpToolCallExpand(message)"
             >
               <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(message) }">▶</span>
-              <code class="cmd-label">{{ mcpToolCallLabel(message) }}</code>
+              <span class="cmd-label">{{ mcpToolCallSummaryText(message) }}</span>
               <span class="cmd-status">{{ mcpToolCallStatusLabel(message) }}</span>
             </button>
             <div
@@ -185,7 +185,7 @@
               @click="toggleCollabToolCallExpand(message)"
             >
               <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(message) }">▶</span>
-              <code class="cmd-label">{{ collabToolCallLabel(message) }}</code>
+              <span class="cmd-label">{{ collabToolCallSummaryText(message) }}</span>
               <span class="cmd-status">{{ collabToolCallStatusLabel(message) }}</span>
             </button>
             <div
@@ -348,7 +348,7 @@
                           @click="toggleCommandExpand(activity)"
                         >
                           <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ activity.commandExecution?.command || '(command)' }}</code>
+                          <span class="cmd-label">{{ commandSummaryText(activity) }}</span>
                           <span class="cmd-status">{{ commandStatusLabel(activity) }}</span>
                         </button>
                         <div
@@ -391,7 +391,7 @@
                           @click="toggleMcpToolCallExpand(activity)"
                         >
                           <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ mcpToolCallLabel(activity) }}</code>
+                          <span class="cmd-label">{{ mcpToolCallSummaryText(activity) }}</span>
                           <span class="cmd-status">{{ mcpToolCallStatusLabel(activity) }}</span>
                         </button>
                         <div
@@ -427,7 +427,7 @@
                           @click="toggleCollabToolCallExpand(activity)"
                         >
                           <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ collabToolCallLabel(activity) }}</code>
+                          <span class="cmd-label">{{ collabToolCallSummaryText(activity) }}</span>
                           <span class="cmd-status">{{ collabToolCallStatusLabel(activity) }}</span>
                         </button>
                         <div
@@ -452,287 +452,7 @@
                     </div>
                   </div>
                 </div>
-                <div
-                  v-else-if="isLiveStageSummaryMessage(message)"
-                  class="stage-summary-block"
-                  :data-status="message.liveStageSummary?.updatedAtMs ? 'tracked' : 'idle'"
-                >
-                  <button type="button" class="stage-summary-header" @click="toggleLiveStageSummary(message)">
-                    <span class="worked-chevron" :class="{ 'worked-chevron-open': isLiveStageSummaryExpanded(message) }">▶</span>
-                    <div class="stage-summary-copy">
-                      <p class="stage-summary-label">
-                        {{ liveStageSummaryLabel(message) }}
-                        <span v-if="liveStageSummaryMeta(message)" class="stage-summary-meta-inline">
-                          {{ liveStageSummaryMeta(message) }}
-                        </span>
-                      </p>
-                    </div>
-                  </button>
-                  <div v-if="isLiveStageSummaryExpanded(message)" class="stage-summary-details">
-                    <div
-                      v-if="liveStageSummaryReasoning(message)"
-                      class="reasoning-card-markdown stage-summary-reasoning"
-                      v-html="renderMarkdownBlocksAsHtml(liveStageSummaryReasoning(message))"
-                    />
-                    <ul v-if="liveStageSummaryDetails(message).length > 0" class="live-overlay-activity-list stage-summary-detail-list">
-                      <li
-                        v-for="(detail, detailIndex) in liveStageSummaryDetails(message)"
-                        :key="`stage-detail:${message.id}:${detailIndex}:${detail}`"
-                        class="live-overlay-activity-item"
-                      >
-                        {{ detail }}
-                      </li>
-                    </ul>
-                    <section v-if="liveStageSummaryBackgroundAgents(message).length > 0" class="live-overlay-agents stage-summary-agents">
-                      <div class="live-overlay-agents-header">
-                        <span class="live-overlay-agents-title">
-                          {{ liveStageSummaryBackgroundAgents(message).length }} background agents
-                        </span>
-                      </div>
-                      <ul class="live-overlay-agents-list">
-                        <li
-                          v-for="agent in liveStageSummaryBackgroundAgents(message)"
-                          :key="`stage-agent:${message.id}:${agent.threadId}`"
-                          class="live-overlay-agent-row"
-                        >
-                          <div class="live-overlay-agent-copy">
-                            <span class="live-overlay-agent-name">{{ agent.title }}</span>
-                            <div
-                              v-if="backgroundAgentRuntimeParts(agent).length > 0"
-                              class="live-overlay-agent-runtime"
-                            >
-                              <span
-                                v-for="part in backgroundAgentRuntimeParts(agent)"
-                                :key="`stage-agent-runtime:${message.id}:${agent.threadId}:${part}`"
-                                class="live-overlay-agent-runtime-chip"
-                              >
-                                {{ part }}
-                              </span>
-                            </div>
-                            <span
-                              v-if="backgroundAgentStatusDetail(agent)"
-                              class="live-overlay-agent-meta"
-                            >
-                              {{ backgroundAgentStatusDetail(agent) }}
-                            </span>
-                          </div>
-                          <div class="live-overlay-agent-actions">
-                            <span
-                              v-if="backgroundAgentDeltaParts(agent).length > 0"
-                              class="live-overlay-agent-delta"
-                            >
-                              <span
-                                v-for="part in backgroundAgentDeltaParts(agent)"
-                                :key="`stage-agent-delta:${message.id}:${agent.threadId}:${part.tone}:${part.label}`"
-                                class="file-change-signed-count"
-                                :data-tone="part.tone"
-                              >
-                                {{ part.label }}
-                              </span>
-                            </span>
-                            <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
-                            <button
-                              type="button"
-                              class="live-overlay-agent-open"
-                              @click="openBackgroundAgentThread(agent.threadId)"
-                            >
-                              Open
-                            </button>
-                          </div>
-                        </li>
-                      </ul>
-                    </section>
-                    <div
-                      v-for="activity in getActivitiesForStage(message)"
-                      :key="`stage-activity:${message.id}:${activity.id}`"
-                      class="worked-cmd-item cmd-card"
-                    >
-                      <template v-if="isCommandMessage(activity)">
-                        <button
-                          type="button"
-                          class="cmd-row"
-                          :class="[
-                            commandStatusClass(activity),
-                            {
-                              'cmd-expanded': isCommandExpanded(activity),
-                              'cmd-compact': true,
-                            },
-                          ]"
-                          @click="toggleCommandExpand(activity)"
-                        >
-                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ activity.commandExecution?.command || '(command)' }}</code>
-                          <span class="cmd-status">{{ commandStatusLabel(activity) }}</span>
-                        </button>
-                        <div
-                          class="cmd-output-wrap"
-                          :class="{ 'cmd-output-visible': isCommandExpanded(activity) }"
-                        >
-                          <div class="cmd-output-inner">
-                            <div class="cmd-surface" data-kind="shell">
-                              <div class="cmd-surface-header">
-                                <span class="cmd-surface-kind">Shell</span>
-                                <span
-                                  v-if="commandCwdPreview(activity)"
-                                  class="cmd-surface-meta"
-                                  :title="activity.commandExecution?.cwd ?? ''"
-                                >
-                                  {{ commandCwdPreview(activity) }}
-                                </span>
-                              </div>
-                              <code class="cmd-surface-command">$ {{ activity.commandExecution?.command || '(command)' }}</code>
-                            <pre
-                              class="cmd-output"
-                              :class="{ 'cmd-output-condensed': isCommandOutputCondensed(activity) }"
-                              v-text="commandOutputText(activity)"
-                            ></pre>
-                            </div>
-                          </div>
-                        </div>
-                      </template>
-                      <template v-else-if="isMcpToolCallMessage(activity)">
-                        <button
-                          type="button"
-                          class="cmd-row"
-                          :class="[
-                            mcpToolCallStatusClass(activity),
-                            {
-                              'cmd-expanded': isMcpToolCallExpanded(activity),
-                              'cmd-compact': true,
-                            },
-                          ]"
-                          @click="toggleMcpToolCallExpand(activity)"
-                        >
-                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ mcpToolCallLabel(activity) }}</code>
-                          <span class="cmd-status">{{ mcpToolCallStatusLabel(activity) }}</span>
-                        </button>
-                        <div
-                          class="cmd-output-wrap"
-                          :class="{ 'cmd-output-visible': isMcpToolCallExpanded(activity) }"
-                        >
-                          <div class="cmd-output-inner">
-                            <div class="cmd-surface" data-kind="mcp">
-                              <div class="cmd-surface-header">
-                                <span class="cmd-surface-kind">MCP tool</span>
-                              </div>
-                              <code class="cmd-surface-command">{{ mcpToolCallLabel(activity) }}</code>
-                            <pre
-                              class="cmd-output"
-                              :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(activity) }"
-                              v-text="mcpToolCallOutput(activity)"
-                            ></pre>
-                            </div>
-                          </div>
-                        </div>
-                      </template>
-                      <template v-else-if="isCollabToolCallMessage(activity)">
-                        <button
-                          type="button"
-                          class="cmd-row"
-                          :class="[
-                            collabToolCallStatusClass(activity),
-                            {
-                              'cmd-expanded': isCollabToolCallExpanded(activity),
-                              'cmd-compact': true,
-                            },
-                          ]"
-                          @click="toggleCollabToolCallExpand(activity)"
-                        >
-                          <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(activity) }">▶</span>
-                          <code class="cmd-label">{{ collabToolCallLabel(activity) }}</code>
-                          <span class="cmd-status">{{ collabToolCallStatusLabel(activity) }}</span>
-                        </button>
-                        <div
-                          class="cmd-output-wrap"
-                          :class="{ 'cmd-output-visible': isCollabToolCallExpanded(activity) }"
-                        >
-                          <div class="cmd-output-inner">
-                            <div class="cmd-surface" data-kind="agent">
-                              <div class="cmd-surface-header">
-                                <span class="cmd-surface-kind">Agent action</span>
-                              </div>
-                              <code class="cmd-surface-command">{{ collabToolCallLabel(activity) }}</code>
-                            <pre
-                              class="cmd-output"
-                              :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(activity) }"
-                              v-text="collabToolCallOutput(activity)"
-                            ></pre>
-                            </div>
-                          </div>
-                        </div>
-                      </template>
-                      <template v-else-if="isFileChangeMessage(activity)">
-                        <section v-if="readStandaloneFileChangeSummary(activity)" class="file-change-summary-block stage-summary-file-changes">
-                          <button
-                            type="button"
-                            class="cmd-row cmd-row-group cmd-compact file-change-summary-row"
-                            :class="{ 'cmd-expanded': isFileChangeSummaryExpanded(activity) }"
-                            @click="toggleFileChangeSummary(activity)"
-                          >
-                            <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isFileChangeSummaryExpanded(activity) }">▶</span>
-                            <span class="file-change-summary-label">
-                              {{ fileChangeSummaryLabel(readStandaloneFileChangeSummary(activity)) }}
-                            </span>
-                            <span class="file-change-summary-status">
-                              <span
-                                v-for="part in fileChangeSummaryStatusParts(readStandaloneFileChangeSummary(activity))"
-                                :key="`stage-summary-status:${activity.id}:${part.tone}:${part.label}`"
-                                class="file-change-signed-count"
-                                :data-tone="part.tone"
-                              >
-                                {{ part.label }}
-                              </span>
-                            </span>
-                          </button>
-                          <div class="cmd-group-wrap" :class="{ 'cmd-group-visible': isFileChangeSummaryExpanded(activity) }">
-                            <div class="file-change-panel-inner">
-                              <ul class="file-change-list">
-                                <li
-                                  v-for="change in readStandaloneFileChangeSummary(activity)?.changes ?? []"
-                                  :key="`stage-file-change:${activity.id}:${change.path}:${change.movedToPath || ''}`"
-                                  class="file-change-item"
-                                >
-                                  <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
-                                    {{ fileChangeOperationLabel(change) }}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    class="file-change-path-button"
-                                    :title="change.path"
-                                    @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
-                                  >
-                                    {{ displayFileChangePath(change.path) }}
-                                  </button>
-                                  <span v-if="change.movedToPath" class="file-change-arrow">→</span>
-                                  <button
-                                    v-if="change.movedToPath"
-                                    type="button"
-                                    class="file-change-path-button"
-                                    :title="change.movedToPath"
-                                    @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
-                                  >
-                                    {{ displayFileChangePath(change.movedToPath) }}
-                                  </button>
-                                  <span v-if="change.addedLineCount > 0 || change.removedLineCount > 0" class="file-change-delta">
-                                    <span
-                                      v-for="part in fileChangeDeltaParts(change)"
-                                      :key="`stage-change-delta:${activity.id}:${change.path}:${part.tone}:${part.label}`"
-                                      class="file-change-signed-count"
-                                      :data-tone="part.tone"
-                                    >
-                                      {{ part.label }}
-                                    </span>
-                                  </span>
-                                </li>
-                              </ul>
-                            </div>
-                          </div>
-                        </section>
-                      </template>
-                    </div>
-                  </div>
-                </div>
+                <template v-else-if="isLiveStageSummaryMessage(message)" />
                 <div
                   v-else-if="isPlanMessage(message)"
                   class="plan-card"
@@ -772,7 +492,7 @@
                     <div
                       v-if="readPlanExplanation(message)"
                       class="plan-card-explanation plan-card-markdown"
-                      v-html="renderMarkdownBlocksAsHtml(readPlanExplanation(message))"
+                      v-html="renderMarkdownBlocksAsHtmlCached(readPlanExplanation(message))"
                     />
                     <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
                       <li
@@ -782,22 +502,22 @@
                         :data-status="step.status"
                       >
                         <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
-                        <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(step.step)" />
+                        <div class="plan-step-text plan-card-markdown" v-html="renderMarkdownBlocksAsHtmlCached(step.step)" />
                       </li>
                     </ol>
-                    <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                    <div v-else class="plan-card-markdown" v-html="renderMarkdownBlocksAsHtmlCached(message.text)" />
                   </div>
                 </div>
                 <div v-else-if="isReasoningMessage(message)" class="reasoning-card">
                   <div class="reasoning-card-header">
                     <p class="reasoning-card-title">Thinking Summary</p>
                   </div>
-                  <div class="reasoning-card-markdown" v-html="renderMarkdownBlocksAsHtml(message.text)" />
+                  <div class="reasoning-card-markdown" v-html="renderMarkdownBlocksAsHtmlCached(message.text)" />
                 </div>
                 <div v-else class="message-text-flow">
-                  <template v-for="(block, blockIndex) in parseMessageBlocks(message.text)" :key="`block-${blockIndex}`">
+                  <template v-for="(block, blockIndex) in getMessageBlocks(message.text)" :key="`block-${blockIndex}`">
                     <p v-if="block.kind === 'paragraph'" class="message-text">
-                      <template v-for="(segment, segmentIndex) in parseInlineSegments(block.value)" :key="`seg-${blockIndex}-${segmentIndex}`">
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`seg-${blockIndex}-${segmentIndex}`">
                         <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                         <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                         <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -831,7 +551,7 @@
                       class="message-heading"
                       :class="headingClass(block.level)"
                     >
-                      <template v-for="(segment, segmentIndex) in parseInlineSegments(block.value)" :key="`heading-seg-${blockIndex}-${segmentIndex}`">
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`heading-seg-${blockIndex}-${segmentIndex}`">
                         <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                         <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                         <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -860,7 +580,7 @@
                       </template>
                     </component>
                     <blockquote v-else-if="block.kind === 'blockquote'" class="message-blockquote">
-                      <template v-for="(segment, segmentIndex) in parseInlineSegments(block.value)" :key="`quote-seg-${blockIndex}-${segmentIndex}`">
+                      <template v-for="(segment, segmentIndex) in getInlineSegments(block.value)" :key="`quote-seg-${blockIndex}-${segmentIndex}`">
                         <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                         <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                         <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -897,7 +617,7 @@
                       <li v-for="(item, itemIndex) in block.items" :key="`task-${blockIndex}-${itemIndex}`" class="message-task-item">
                         <span class="message-task-checkbox" :data-checked="item.checked">{{ item.checked ? '☑' : '☐' }}</span>
                         <div class="message-list-item-text">
-                          <template v-for="(segment, segmentIndex) in parseInlineSegments(item.text)" :key="`task-seg-${blockIndex}-${itemIndex}-${segmentIndex}`">
+                          <template v-for="(segment, segmentIndex) in getInlineSegments(item.text)" :key="`task-seg-${blockIndex}-${itemIndex}-${segmentIndex}`">
                             <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                             <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                             <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -946,7 +666,7 @@
                               class="message-table-head-cell"
                               :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
                             >
-                              <template v-for="(segment, segmentIndex) in parseInlineSegments(cell)" :key="`th-seg-${blockIndex}-${cellIndex}-${segmentIndex}`">
+                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`th-seg-${blockIndex}-${cellIndex}-${segmentIndex}`">
                                 <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                                 <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                                 <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -984,7 +704,7 @@
                               class="message-table-cell"
                               :style="{ textAlign: block.alignments[cellIndex] ?? 'left' }"
                             >
-                              <template v-for="(segment, segmentIndex) in parseInlineSegments(cell)" :key="`td-seg-${blockIndex}-${rowIndex}-${cellIndex}-${segmentIndex}`">
+                              <template v-for="(segment, segmentIndex) in getInlineSegments(cell)" :key="`td-seg-${blockIndex}-${rowIndex}-${cellIndex}-${segmentIndex}`">
                                 <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                                 <strong v-else-if="segment.kind === 'bold'" class="message-bold-text">{{ segment.value }}</strong>
                                 <em v-else-if="segment.kind === 'italic'" class="message-italic-text">{{ segment.value }}</em>
@@ -1164,6 +884,300 @@
       </li>
       </template>
       <li
+        v-if="liveStageSummaryMessages.length > 0"
+        class="conversation-item conversation-item-stage-strip"
+      >
+        <div class="runtime-stage-strip-wrap">
+          <div class="runtime-stage-strip" role="list" aria-label="Runtime stage summaries">
+            <button
+              v-for="stageMessage in liveStageSummaryMessages"
+              :key="`stage-strip:${stageMessage.id}`"
+              type="button"
+              class="runtime-stage-chip"
+              :data-expanded="isLiveStageSummaryExpanded(stageMessage)"
+              @click="toggleLiveStageSummary(stageMessage)"
+            >
+              <span class="runtime-stage-chip-label">{{ liveStageSummaryLabel(stageMessage) }}</span>
+              <span
+                v-if="liveStageSummaryMeta(stageMessage)"
+                class="runtime-stage-chip-meta"
+              >
+                {{ liveStageSummaryMeta(stageMessage) }}
+              </span>
+            </button>
+          </div>
+          <div
+            v-for="stageMessage in liveStageSummaryMessages"
+            v-show="isLiveStageSummaryExpanded(stageMessage)"
+            :key="`stage-strip-panel:${stageMessage.id}`"
+            class="runtime-stage-panel"
+          >
+            <div
+              v-if="liveStageSummaryReasoning(stageMessage)"
+              class="reasoning-card-markdown stage-summary-reasoning"
+              v-html="renderMarkdownBlocksAsHtmlCached(liveStageSummaryReasoning(stageMessage))"
+            />
+            <ul v-if="liveStageSummaryDetails(stageMessage).length > 0" class="live-overlay-activity-list stage-summary-detail-list">
+              <li
+                v-for="(detail, detailIndex) in liveStageSummaryDetails(stageMessage)"
+                :key="`stage-detail:${stageMessage.id}:${detailIndex}:${detail}`"
+                class="live-overlay-activity-item"
+              >
+                {{ detail }}
+              </li>
+            </ul>
+            <section v-if="liveStageSummaryBackgroundAgents(stageMessage).length > 0" class="live-overlay-agents stage-summary-agents">
+              <div class="live-overlay-agents-header">
+                <span class="live-overlay-agents-title">
+                  {{ liveStageSummaryBackgroundAgents(stageMessage).length }} background agents
+                </span>
+              </div>
+              <ul class="live-overlay-agents-list">
+                <li
+                  v-for="agent in liveStageSummaryBackgroundAgents(stageMessage)"
+                  :key="`stage-agent:${stageMessage.id}:${agent.threadId}`"
+                  class="live-overlay-agent-row"
+                >
+                  <div class="live-overlay-agent-copy">
+                    <span class="live-overlay-agent-name">{{ agent.title }}</span>
+                    <div
+                      v-if="backgroundAgentRuntimeParts(agent).length > 0"
+                      class="live-overlay-agent-runtime"
+                    >
+                      <span
+                        v-for="part in backgroundAgentRuntimeParts(agent)"
+                        :key="`stage-agent-runtime:${stageMessage.id}:${agent.threadId}:${part}`"
+                        class="live-overlay-agent-runtime-chip"
+                      >
+                        {{ part }}
+                      </span>
+                    </div>
+                    <span
+                      v-if="backgroundAgentStatusDetail(agent)"
+                      class="live-overlay-agent-meta"
+                    >
+                      {{ backgroundAgentStatusDetail(agent) }}
+                    </span>
+                  </div>
+                  <div class="live-overlay-agent-actions">
+                    <span
+                      v-if="backgroundAgentDeltaParts(agent).length > 0"
+                      class="live-overlay-agent-delta"
+                    >
+                      <span
+                        v-for="part in backgroundAgentDeltaParts(agent)"
+                        :key="`stage-agent-delta:${stageMessage.id}:${agent.threadId}:${part.tone}:${part.label}`"
+                        class="file-change-signed-count"
+                        :data-tone="part.tone"
+                      >
+                        {{ part.label }}
+                      </span>
+                    </span>
+                    <span class="live-overlay-agent-status" :data-status="agent.status">{{ backgroundAgentStatusLabel(agent) }}</span>
+                    <button
+                      type="button"
+                      class="live-overlay-agent-open"
+                      @click="openBackgroundAgentThread(agent.threadId)"
+                    >
+                      Open
+                    </button>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <div
+              v-for="activity in getActivitiesForStage(stageMessage)"
+              :key="`stage-activity:${stageMessage.id}:${activity.id}`"
+              class="worked-cmd-item cmd-card"
+            >
+              <template v-if="isCommandMessage(activity)">
+                <button
+                  type="button"
+                  class="cmd-row"
+                  :class="[
+                    commandStatusClass(activity),
+                    {
+                      'cmd-expanded': isCommandExpanded(activity),
+                      'cmd-compact': true,
+                    },
+                  ]"
+                  @click="toggleCommandExpand(activity)"
+                >
+                  <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(activity) }">▶</span>
+                  <span class="cmd-label">{{ commandSummaryText(activity) }}</span>
+                  <span class="cmd-status">{{ commandStatusLabel(activity) }}</span>
+                </button>
+                <div
+                  class="cmd-output-wrap"
+                  :class="{ 'cmd-output-visible': isCommandExpanded(activity) }"
+                >
+                  <div class="cmd-output-inner">
+                    <div class="cmd-surface" data-kind="shell">
+                      <div class="cmd-surface-header">
+                        <span class="cmd-surface-kind">Shell</span>
+                        <span
+                          v-if="commandCwdPreview(activity)"
+                          class="cmd-surface-meta"
+                          :title="activity.commandExecution?.cwd ?? ''"
+                        >
+                          {{ commandCwdPreview(activity) }}
+                        </span>
+                      </div>
+                      <code class="cmd-surface-command">$ {{ activity.commandExecution?.command || '(command)' }}</code>
+                      <pre
+                        class="cmd-output"
+                        :class="{ 'cmd-output-condensed': isCommandOutputCondensed(activity) }"
+                        v-text="commandOutputText(activity)"
+                      ></pre>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="isMcpToolCallMessage(activity)">
+                <button
+                  type="button"
+                  class="cmd-row"
+                  :class="[
+                    mcpToolCallStatusClass(activity),
+                    {
+                      'cmd-expanded': isMcpToolCallExpanded(activity),
+                      'cmd-compact': true,
+                    },
+                  ]"
+                  @click="toggleMcpToolCallExpand(activity)"
+                >
+                  <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isMcpToolCallExpanded(activity) }">▶</span>
+                  <span class="cmd-label">{{ mcpToolCallSummaryText(activity) }}</span>
+                  <span class="cmd-status">{{ mcpToolCallStatusLabel(activity) }}</span>
+                </button>
+                <div
+                  class="cmd-output-wrap"
+                  :class="{ 'cmd-output-visible': isMcpToolCallExpanded(activity) }"
+                >
+                  <div class="cmd-output-inner">
+                    <div class="cmd-surface" data-kind="mcp">
+                      <div class="cmd-surface-header">
+                        <span class="cmd-surface-kind">MCP tool</span>
+                      </div>
+                      <code class="cmd-surface-command">{{ mcpToolCallLabel(activity) }}</code>
+                      <pre
+                        class="cmd-output"
+                        :class="{ 'cmd-output-condensed': isMcpToolCallOutputCondensed(activity) }"
+                        v-text="mcpToolCallOutput(activity)"
+                      ></pre>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="isCollabToolCallMessage(activity)">
+                <button
+                  type="button"
+                  class="cmd-row"
+                  :class="[
+                    collabToolCallStatusClass(activity),
+                    {
+                      'cmd-expanded': isCollabToolCallExpanded(activity),
+                      'cmd-compact': true,
+                    },
+                  ]"
+                  @click="toggleCollabToolCallExpand(activity)"
+                >
+                  <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCollabToolCallExpanded(activity) }">▶</span>
+                  <span class="cmd-label">{{ collabToolCallSummaryText(activity) }}</span>
+                  <span class="cmd-status">{{ collabToolCallStatusLabel(activity) }}</span>
+                </button>
+                <div
+                  class="cmd-output-wrap"
+                  :class="{ 'cmd-output-visible': isCollabToolCallExpanded(activity) }"
+                >
+                  <div class="cmd-output-inner">
+                    <div class="cmd-surface" data-kind="agent">
+                      <div class="cmd-surface-header">
+                        <span class="cmd-surface-kind">Agent action</span>
+                      </div>
+                      <code class="cmd-surface-command">{{ collabToolCallLabel(activity) }}</code>
+                      <pre
+                        class="cmd-output"
+                        :class="{ 'cmd-output-condensed': isCollabToolCallOutputCondensed(activity) }"
+                        v-text="collabToolCallOutput(activity)"
+                      ></pre>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="isFileChangeMessage(activity)">
+                <section v-if="readStandaloneFileChangeSummary(activity)" class="file-change-summary-block stage-summary-file-changes">
+                  <button
+                    type="button"
+                    class="cmd-row cmd-row-group cmd-compact file-change-summary-row"
+                    :class="{ 'cmd-expanded': isFileChangeSummaryExpanded(activity) }"
+                    @click="toggleFileChangeSummary(activity)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isFileChangeSummaryExpanded(activity) }">▶</span>
+                    <span class="file-change-summary-label">
+                      {{ fileChangeSummaryLabel(readStandaloneFileChangeSummary(activity)) }}
+                    </span>
+                    <span class="file-change-summary-status">
+                      <span
+                        v-for="part in fileChangeSummaryStatusParts(readStandaloneFileChangeSummary(activity))"
+                        :key="`stage-summary-status:${activity.id}:${part.tone}:${part.label}`"
+                        class="file-change-signed-count"
+                        :data-tone="part.tone"
+                      >
+                        {{ part.label }}
+                      </span>
+                    </span>
+                  </button>
+                  <div class="cmd-group-wrap" :class="{ 'cmd-group-visible': isFileChangeSummaryExpanded(activity) }">
+                    <div class="file-change-panel-inner">
+                      <ul class="file-change-list">
+                        <li
+                          v-for="change in readStandaloneFileChangeSummary(activity)?.changes ?? []"
+                          :key="`stage-file-change:${activity.id}:${change.path}:${change.movedToPath || ''}`"
+                          class="file-change-item"
+                        >
+                          <span class="file-change-badge" :data-operation="fileChangeOperationTone(change)">
+                            {{ fileChangeOperationLabel(change) }}
+                          </span>
+                          <button
+                            type="button"
+                            class="file-change-path-button"
+                            :title="change.path"
+                            @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
+                          >
+                            {{ displayFileChangePath(change.path) }}
+                          </button>
+                          <span v-if="change.movedToPath" class="file-change-arrow">→</span>
+                          <button
+                            v-if="change.movedToPath"
+                            type="button"
+                            class="file-change-path-button"
+                            :title="change.movedToPath"
+                            @click="openDiffViewer(readStandaloneFileChangeSummary(activity), change)"
+                          >
+                            {{ displayFileChangePath(change.movedToPath) }}
+                          </button>
+                          <span v-if="change.addedLineCount > 0 || change.removedLineCount > 0" class="file-change-delta">
+                            <span
+                              v-for="part in fileChangeDeltaParts(change)"
+                              :key="`stage-change-delta:${activity.id}:${change.path}:${part.tone}:${part.label}`"
+                              class="file-change-signed-count"
+                              :data-tone="part.tone"
+                            >
+                              {{ part.label }}
+                            </span>
+                          </span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </section>
+              </template>
+            </div>
+          </div>
+        </div>
+      </li>
+      <li
         v-if="liveOverlay"
         class="conversation-item conversation-item-overlay"
         :data-compact="isLiveOverlayCompact"
@@ -1173,7 +1187,7 @@
             <article class="live-overlay-inline" :data-compact="isLiveOverlayCompact" aria-live="polite">
               <div class="live-overlay-header">
                 <div class="live-overlay-header-copy">
-                  <p class="live-overlay-label">
+                  <p v-if="showLiveOverlayLabel" class="live-overlay-label">
                     {{ liveOverlay.activityLabel }}
                     <span v-if="isLiveOverlayCompact && liveOverlayCompactSummary" class="live-overlay-summary-inline">
                       {{ liveOverlayCompactSummary }}
@@ -1195,10 +1209,13 @@
                 </div>
               </div>
               <template v-if="!isLiveOverlayCompact">
-                <p v-if="liveOverlay.activitySummaryText" class="live-overlay-summary">{{ liveOverlay.activitySummaryText }}</p>
-                <ul v-if="liveOverlay.activityDetails.length > 0" class="live-overlay-activity-list">
+                <p v-if="liveOverlayPrimarySummary" class="live-overlay-summary">{{ liveOverlayPrimarySummary }}</p>
+                <p v-if="liveOverlaySecondarySummary" class="live-overlay-summary live-overlay-summary-secondary">
+                  {{ liveOverlaySecondarySummary }}
+                </p>
+                <ul v-if="liveOverlayDetailList.length > 0" class="live-overlay-activity-list">
                   <li
-                    v-for="(detail, detailIndex) in liveOverlay.activityDetails"
+                    v-for="(detail, detailIndex) in liveOverlayDetailList"
                     :key="`live-detail:${detailIndex}:${detail}`"
                     class="live-overlay-activity-item"
                   >
@@ -1641,8 +1658,25 @@ function isFileChangeMessage(message: UiMessage): boolean {
     && message.fileChanges.length > 0
 }
 
+function isRuntimeConfigOnlyDetails(details: string[]): boolean {
+  return details.length > 0
+    && details.every((detail) => /^(Mode|Model|Thinking|Speed):\s+/u.test(detail.trim()))
+}
+
+function isConfigOnlyThinkingStageSummary(message: UiMessage): boolean {
+  const summary = message.liveStageSummary
+  if (!summary || summary.label !== 'Thinking') return false
+  if (summary.summaryText.trim().length > 0) return false
+  if (summary.reasoningText.trim().length > 0) return false
+  if (summary.errorText.trim().length > 0) return false
+  if (summary.backgroundAgents.length > 0) return false
+  return isRuntimeConfigOnlyDetails(summary.details)
+}
+
 function isLiveStageSummaryMessage(message: UiMessage): boolean {
-  return message.messageType === 'stage.live' && !!message.liveStageSummary
+  return message.messageType === 'stage.live'
+    && !!message.liveStageSummary
+    && !isConfigOnlyThinkingStageSummary(message)
 }
 
 function isCopyableAssistantMessage(message: UiMessage): boolean {
@@ -1774,6 +1808,18 @@ const hiddenStageToolIds = computed(() => {
   return next
 })
 
+const liveStageSummaryMessages = computed(() =>
+  props.messages.filter((message) => isLiveStageSummaryMessage(message)),
+)
+
+const hiddenLiveStageSummaryIds = computed(() => {
+  const next = new Set<string>()
+  for (const message of liveStageSummaryMessages.value) {
+    next.add(message.id)
+  }
+  return next
+})
+
 const hiddenLiveRuntimeMessageIds = computed(() => {
   const next = new Set<string>()
   const activeTurnId = activeRuntimeTurnId.value
@@ -1814,6 +1860,7 @@ function planStepStatusIcon(status: UiPlanStep['status']): string {
 }
 
 function isCommandAutoExpanded(message: UiMessage): boolean {
+  if (isMobile.value) return false
   return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
 }
 
@@ -1832,6 +1879,7 @@ function isCommandOutputCondensed(message: UiMessage): boolean {
 }
 
 function isMcpToolCallAutoExpanded(message: UiMessage): boolean {
+  if (isMobile.value) return false
   return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
 }
 
@@ -1850,6 +1898,7 @@ function isMcpToolCallOutputCondensed(message: UiMessage): boolean {
 }
 
 function isCollabToolCallAutoExpanded(message: UiMessage): boolean {
+  if (isMobile.value) return false
   return !hasLiveAssistantText.value && message.id === activeToolMessageId.value
 }
 
@@ -1958,9 +2007,10 @@ function isCommandGroupExpanded(message: UiMessage): boolean {
 function commandGroupSummaryLabel(message: UiMessage): string {
   const commands = getCommandBlockForLatest(message)
   const count = commands.length
-  const latestCommand = message.commandExecution?.command?.trim() || '(command)'
+  const latestCommand = compactCommandPreview(message.commandExecution?.command?.trim() || '(command)')
   const countLabel = count === 1 ? '1 command' : `${count} commands`
-  return `${countLabel} · latest: ${latestCommand}`
+  if (isMobile.value) return countLabel
+  return latestCommand ? `${countLabel} · ${latestCommand}` : countLabel
 }
 
 function commandGroupSummaryStatus(message: UiMessage): string {
@@ -1980,6 +2030,12 @@ function isWorkedExpanded(message: UiMessage): boolean {
 
 function toggleLiveStageSummary(message: UiMessage): void {
   if (!isLiveStageSummaryMessage(message)) return
+  if (isMobile.value) {
+    expandedLiveStageSummaryIds.value = expandedLiveStageSummaryIds.value.has(message.id)
+      ? new Set()
+      : new Set([message.id])
+    return
+  }
   const next = new Set(expandedLiveStageSummaryIds.value)
   if (next.has(message.id)) next.delete(message.id)
   else next.add(message.id)
@@ -2051,11 +2107,18 @@ function commandOutputText(message: UiMessage): string {
   return message.commandExecution?.aggregatedOutput || '(no output)'
 }
 
+function commandSummaryText(message: UiMessage): string {
+  const preview = compactCommandPreview(message.commandExecution?.command?.trim() || '(command)')
+  if (isMobile.value) return preview ? `Shell · ${preview}` : '1 command'
+  return preview ? `1 command · ${preview}` : '1 command'
+}
+
 function compactCommandPreview(command: string): string {
-  const normalized = normalizeCompactPreviewText(command)
+  const normalized = normalizeShellCommandPreview(command)
   if (!normalized) return 'Shell command'
-  if (normalized.length <= 72) return normalized
-  return `${normalized.slice(0, 69).trimEnd()}…`
+  const maxLength = isMobile.value ? 34 : 72
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}…`
 }
 
 function compactStageDetailSummary(label: string, details: string[]): string {
@@ -2065,6 +2128,17 @@ function compactStageDetailSummary(label: string, details: string[]): string {
   if (label === 'Calling MCP tool') return primary
   if (label === 'Applying changes') return compactPathTail(primary) || primary
   return normalizeCompactPreviewText(primary)
+}
+
+function normalizeShellCommandPreview(command: string): string {
+  let normalized = normalizeCompactPreviewText(command)
+  normalized = normalized
+    .replace(/^\/bin\/(?:bash|sh)\s+-lc\s+/u, '')
+    .replace(/^(?:bash|sh)\s+-lc\s+/u, '')
+    .replace(/^['"]+/u, '')
+    .replace(/['"]+$/u, '')
+    .trim()
+  return normalized
 }
 
 function formatReasoningEffortLabel(reasoningEffort: string): string {
@@ -2190,6 +2264,12 @@ function mcpToolCallLabel(message: UiMessage): string {
   return qualified || '(MCP tool)'
 }
 
+function mcpToolCallSummaryText(message: UiMessage): string {
+  const label = mcpToolCallLabel(message)
+  if (isMobile.value) return label ? `Tool · ${label}` : '1 MCP tool'
+  return label ? `1 MCP tool · ${label}` : '1 MCP tool'
+}
+
 function mcpToolCallStatusLabel(message: UiMessage): string {
   const mcp = message.mcpToolCall
   if (!mcp) return ''
@@ -2249,6 +2329,15 @@ function collabToolCallLabel(message: UiMessage): string {
   const targetCount = collab.receiverThreadIds.length
   const targetSuffix = targetCount > 0 ? ` · ${targetCount} ${targetCount === 1 ? 'agent' : 'agents'}` : ''
   return `${collabToolNameLabel(collab.tool)}${targetSuffix}`
+}
+
+function collabToolCallSummaryText(message: UiMessage): string {
+  const collab = message.collabToolCall
+  if (!collab) return 'Agent action'
+  const targetCount = collab.receiverThreadIds.length
+  const targetLabel = targetCount > 0 ? `${targetCount} ${targetCount === 1 ? 'agent' : 'agents'}` : 'Agent action'
+  if (isMobile.value) return `${targetLabel} · ${collabToolNameLabel(collab.tool)}`
+  return `${targetLabel} · ${collabToolNameLabel(collab.tool)}`
 }
 
 function collabToolCallStatusLabel(message: UiMessage): string {
@@ -2484,6 +2573,30 @@ const highlightJsModule = ref<HighlightJsModule | null>(null)
 let highlightJsLoader: Promise<void> | null = null
 const liveOverlayClockNow = ref(Date.now())
 type ScrollRestoreMode = 'restore-saved-position' | 'preserve-detached-viewport'
+const MAX_RENDER_PARSE_CACHE_ENTRIES = 500
+const inlineSegmentCache = new Map<string, InlineSegment[]>()
+const messageBlockCache = new Map<string, MessageBlock[]>()
+const markdownHtmlCache = new Map<string, { html: string; highlighted: boolean }>()
+
+function setBoundedRenderCacheEntry<T>(cache: Map<string, T>, key: string, value: T): T {
+  if (!cache.has(key) && cache.size >= MAX_RENDER_PARSE_CACHE_ENTRIES) {
+    cache.clear()
+  }
+  cache.set(key, value)
+  return value
+}
+
+function getInlineSegments(text: string): InlineSegment[] {
+  const cached = inlineSegmentCache.get(text)
+  if (cached) return cached
+  return setBoundedRenderCacheEntry(inlineSegmentCache, text, parseInlineSegments(text))
+}
+
+function getMessageBlocks(text: string): MessageBlock[] {
+  const cached = messageBlockCache.get(text)
+  if (cached) return cached
+  return setBoundedRenderCacheEntry(messageBlockCache, text, parseMessageBlocks(text))
+}
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -2531,6 +2644,49 @@ const liveOverlayCompactSummary = computed(() => {
     parts.push(normalizeCompactPreviewText(overlay.reasoningText))
   }
   return parts.filter((part) => part.length > 0).slice(0, 2).join(' · ')
+})
+
+const showLiveOverlayLabel = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return false
+  const label = overlay.activityLabel.trim()
+  if (!label) return false
+  if (label !== 'Thinking') return true
+  return !liveOverlayPrimarySummary.value && !liveOverlayCompactSummary.value
+})
+
+const liveOverlayPrimarySummary = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return ''
+  if (overlay.activitySummaryText.trim()) return overlay.activitySummaryText.trim()
+  const firstDetail = overlay.activityDetails.find((detail) => detail.trim().length > 0)
+  if (firstDetail) return firstDetail.trim()
+  if (overlay.errorText.trim()) return overlay.errorText.trim()
+  if (overlay.reasoningText.trim()) return normalizeCompactPreviewText(overlay.reasoningText)
+  return ''
+})
+
+const liveOverlayExtraDetails = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return [] as string[]
+  const details = overlay.activityDetails.map((detail) => detail.trim()).filter((detail) => detail.length > 0)
+  if (details.length === 0) return [] as string[]
+  if (overlay.activitySummaryText.trim()) return details
+  return details.slice(1)
+})
+
+const liveOverlaySecondarySummary = computed(() => {
+  const overlay = props.liveOverlay
+  if (!overlay) return ''
+  if (overlay.backgroundAgents.length > 0 || overlay.reasoningText.trim() || overlay.errorText.trim()) return ''
+  const details = liveOverlayExtraDetails.value
+  if (details.length === 0) return ''
+  return details.slice(0, 2).join(' · ')
+})
+
+const liveOverlayDetailList = computed(() => {
+  if (liveOverlaySecondarySummary.value) return [] as string[]
+  return liveOverlayExtraDetails.value
 })
 
 function toggleLiveOverlayExpand(): void {
@@ -4495,7 +4651,7 @@ function renderHighlightedCodeAsHtml(language: string, value: string): string {
 }
 
 function renderInlineSegmentsAsHtml(text: string): string {
-  return parseInlineSegments(text)
+  return getInlineSegments(text)
     .map((segment) => {
       if (segment.kind === 'text') {
         return escapeHtml(segment.value)
@@ -4600,9 +4756,21 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
 }
 
 function renderMarkdownBlocksAsHtml(text: string): string {
-  return parseMessageBlocks(text)
+  return getMessageBlocks(text)
     .map((block) => renderMessageBlockAsHtml(block))
     .join('')
+}
+
+function renderMarkdownBlocksAsHtmlCached(text: string): string {
+  const highlighted = highlightJsModule.value !== null
+  const cached = markdownHtmlCache.get(text)
+  if (cached && cached.highlighted === highlighted) {
+    return cached.html
+  }
+
+  const html = renderMarkdownBlocksAsHtml(text)
+  setBoundedRenderCacheEntry(markdownHtmlCache, text, { html, highlighted })
+  return html
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -4963,7 +5131,14 @@ watch(
       ]),
     )
 
-    await scheduleScrollRestore(autoFollowOutput.value ? 'restore-saved-position' : 'preserve-detached-viewport')
+    if (autoFollowOutput.value) {
+      await nextTick()
+      bindPendingImageHandlers()
+      scheduleBottomLock(4)
+      return
+    }
+
+    await scheduleScrollRestore('preserve-detached-viewport')
   },
 )
 
@@ -4991,7 +5166,12 @@ watch(
   () => props.pendingRequests,
   async () => {
     if (props.isLoading) return
-    await scheduleScrollRestore(autoFollowOutput.value ? 'restore-saved-position' : 'preserve-detached-viewport')
+    if (autoFollowOutput.value) {
+      await nextTick()
+      scheduleBottomLock(4)
+      return
+    }
+    await scheduleScrollRestore('preserve-detached-viewport')
   },
   { deep: true },
 )
@@ -5024,6 +5204,9 @@ watch(
     localScrollState.value = null
     autoFollowOutput.value = props.scrollState?.isAtBottom !== false
     modalImageUrl.value = ''
+    inlineSegmentCache.clear()
+    messageBlockCache.clear()
+    markdownHtmlCache.clear()
   },
   { flush: 'post' },
 )
@@ -5140,6 +5323,10 @@ onBeforeUnmount(() => {
   @apply py-0.5;
 }
 
+.conversation-item-stage-strip {
+  @apply justify-center py-1;
+}
+
 .message-row {
   @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex;
 }
@@ -5236,12 +5423,11 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-inline::before {
-  content: '';
-  @apply absolute left-0 top-1 bottom-1 w-px bg-zinc-200;
+  content: none;
 }
 
 .live-overlay-header {
-  @apply flex items-start gap-2 justify-between pl-3;
+  @apply flex items-start gap-3 justify-between;
 }
 
 .live-overlay-header-copy {
@@ -5268,6 +5454,10 @@ onBeforeUnmount(() => {
   @apply m-0 text-[12px] leading-5 text-zinc-500;
 }
 
+.live-overlay-summary-secondary {
+  @apply text-zinc-400;
+}
+
 .live-overlay-summary-compact {
   @apply text-[12px] leading-5 text-zinc-500;
   display: -webkit-box;
@@ -5289,12 +5479,12 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-activity-item {
-  @apply text-sm leading-5 text-zinc-500 pl-3 relative;
+  @apply text-[12px] leading-5 text-zinc-500 pl-3 relative;
 }
 
 .live-overlay-activity-item::before {
   content: '';
-  @apply absolute left-0 top-[0.6rem] h-1 w-1 rounded-full bg-zinc-400/80;
+  @apply absolute left-0 top-[0.55rem] h-1 w-1 rounded-full bg-zinc-300;
 }
 
 .live-overlay-agents {
@@ -5495,16 +5685,15 @@ onBeforeUnmount(() => {
 }
 
 .plan-card {
-  @apply relative flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-1.5 px-0 py-1 text-slate-900;
+  @apply relative flex max-w-[min(var(--chat-card-max,76ch),100%)] flex-col gap-1 px-0 py-0.5 text-slate-900;
 }
 
 .plan-card-compact {
-  @apply gap-1 py-0.5;
+  @apply gap-0.5 py-0;
 }
 
 .plan-card::before {
-  content: '';
-  @apply absolute left-0 top-1 bottom-1 w-px bg-zinc-200;
+  content: none;
 }
 
 .reasoning-card {
@@ -5566,7 +5755,7 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-header {
-  @apply flex items-start justify-between gap-3 pl-3;
+  @apply flex items-start justify-between gap-2;
 }
 
 .plan-card-header-copy {
@@ -5590,7 +5779,7 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-toggle-button {
-  @apply inline-flex h-5 w-5 items-center justify-center rounded-md border border-transparent bg-transparent text-zinc-400 transition hover:text-zinc-700;
+  @apply inline-flex h-4 w-4 items-center justify-center rounded-md border border-transparent bg-transparent text-zinc-400 transition hover:text-zinc-700;
 }
 
 .plan-card-toggle-icon {
@@ -5602,12 +5791,12 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-body {
-  @apply ml-3 flex max-h-64 flex-col gap-2 overflow-y-auto border-l border-zinc-200 pl-3 pr-1 pt-1;
+  @apply flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1 pt-0.5;
   overscroll-behavior: contain;
 }
 
 .plan-card-explanation {
-  @apply text-zinc-600;
+  @apply text-zinc-500;
 }
 
 .plan-card-preview {
@@ -5729,31 +5918,31 @@ onBeforeUnmount(() => {
 }
 
 .plan-step-list {
-  @apply m-0 flex list-none flex-col gap-2 p-0;
+  @apply m-0 flex list-none flex-col gap-1 p-0;
 }
 
 .plan-step-item {
-  @apply flex items-start gap-2 rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-sm leading-relaxed text-slate-800;
+  @apply flex items-start gap-1.5 rounded-none border-none bg-transparent px-0 py-0 text-[12px] leading-5 text-zinc-500;
 }
 
 .plan-step-item[data-status='completed'] {
-  @apply border-emerald-200 bg-emerald-50/80;
+  @apply text-zinc-400;
 }
 
 .plan-step-item[data-status='inProgress'] {
-  @apply border-amber-200 bg-amber-50/80;
+  @apply text-zinc-600;
 }
 
 .plan-step-status {
-  @apply mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700;
+  @apply mt-0.5 inline-flex shrink-0 items-center justify-center rounded-none bg-transparent text-[11px] font-medium text-zinc-400;
 }
 
 .plan-step-status[data-status='completed'] {
-  @apply bg-emerald-200 text-emerald-900;
+  @apply text-zinc-300;
 }
 
 .plan-step-status[data-status='inProgress'] {
-  @apply bg-amber-200 text-amber-900;
+  @apply text-zinc-500;
 }
 
 .plan-step-text {
@@ -5986,7 +6175,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-card {
-  @apply flex flex-col gap-1.5;
+  @apply flex flex-col gap-1;
 }
 
 .stage-summary-block {
@@ -6017,6 +6206,74 @@ onBeforeUnmount(() => {
 
 .stage-summary-details {
   @apply ml-3 mt-1 flex flex-col gap-2 border-l border-zinc-200 pl-3 pt-1;
+}
+
+.runtime-stage-strip-wrap {
+  @apply flex w-full max-w-[min(var(--chat-column-max,45rem),100%)] flex-col items-start gap-1.5;
+}
+
+.runtime-stage-strip {
+  @apply flex w-full flex-col items-start gap-1;
+}
+
+.runtime-stage-chip {
+  @apply inline-flex max-w-full items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left text-[12px] leading-5 text-zinc-400 transition hover:text-zinc-600;
+}
+
+.runtime-stage-chip[data-expanded='true'] {
+  @apply text-zinc-600;
+}
+
+.runtime-stage-chip-label {
+  @apply truncate font-normal;
+}
+
+.runtime-stage-chip-meta {
+  @apply truncate text-zinc-400;
+}
+
+.runtime-stage-chip::after {
+  content: '▾';
+  @apply text-[10px] leading-4 text-zinc-300;
+}
+
+.runtime-stage-chip[data-expanded='true']::after {
+  @apply text-zinc-400;
+  transform: rotate(180deg);
+}
+
+.runtime-stage-panel {
+  @apply flex w-full max-w-[min(var(--chat-column-max,45rem),100%)] flex-col gap-1.5 pl-4 pt-0;
+}
+
+@media (max-width: 639px) {
+  .conversation-item-stage-strip {
+    @apply px-0;
+  }
+
+  .runtime-stage-strip-wrap {
+    @apply w-full max-w-full items-stretch gap-1;
+  }
+
+  .runtime-stage-strip {
+    @apply w-full gap-1;
+  }
+
+  .runtime-stage-chip {
+    @apply max-w-full px-0 py-0 text-[11px] leading-4;
+  }
+
+  .runtime-stage-chip[data-expanded='true'] {
+    @apply text-zinc-600;
+  }
+
+  .runtime-stage-chip-meta {
+    @apply inline;
+  }
+
+  .runtime-stage-panel {
+    @apply w-full max-w-full gap-1 pl-3 pt-0;
+  }
 }
 
 .stage-summary-reasoning {
@@ -6053,17 +6310,16 @@ onBeforeUnmount(() => {
 }
 
 .cmd-row {
-  @apply w-full flex items-center gap-1.5 rounded-lg border-none bg-transparent px-0 py-0 text-left cursor-pointer transition hover:bg-transparent;
+  @apply w-full flex items-center gap-1.5 border-none bg-transparent px-0 py-0 text-left cursor-pointer transition hover:bg-transparent;
 }
 
 .cmd-row.cmd-row-group {
-  @apply rounded-2xl border border-dashed border-zinc-300 bg-zinc-100/80 px-2 py-1.5 text-zinc-600;
+  @apply border-none bg-transparent px-0 py-0 text-zinc-600;
 }
 
 .cmd-row.cmd-compact {
   gap: 0.375rem;
-  padding: 0.125rem 0.25rem;
-  border-radius: 0.5rem;
+  padding: 0.125rem 0;
 }
 
 .cmd-row.cmd-compact .cmd-chevron {
@@ -6080,7 +6336,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-row.cmd-expanded {
-  @apply rounded-b-none;
+  @apply rounded-none;
 }
 
 .cmd-chevron {
@@ -6092,11 +6348,11 @@ onBeforeUnmount(() => {
 }
 
 .cmd-label {
-  @apply flex-1 min-w-0 truncate text-[12px] font-medium text-zinc-700;
+  @apply flex-1 min-w-0 truncate text-[12px] font-normal text-zinc-500;
 }
 
 .cmd-group-label {
-  @apply flex-1 min-w-0 truncate text-xs font-medium text-zinc-600;
+  @apply flex-1 min-w-0 truncate text-[12px] font-normal text-zinc-500;
 }
 
 .cmd-status {
@@ -6116,16 +6372,14 @@ onBeforeUnmount(() => {
 }
 
 .cmd-output-wrap {
-  @apply rounded-[18px] border border-zinc-200 bg-zinc-50/75;
+  @apply bg-transparent;
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 300ms ease-out, border-color 300ms ease-out;
-  border-color: transparent;
+  transition: grid-template-rows 300ms ease-out;
 }
 
 .cmd-output-wrap.cmd-output-visible {
   grid-template-rows: 1fr;
-  border-color: #e4e4e7;
 }
 
 .cmd-group-wrap {
@@ -6139,7 +6393,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-group-inner {
-  @apply mb-1 flex min-h-0 flex-col gap-1 overflow-hidden pl-2;
+  @apply mb-1 flex min-h-0 flex-col gap-1 overflow-hidden pl-3;
 }
 
 .cmd-output-inner {
@@ -6148,15 +6402,15 @@ onBeforeUnmount(() => {
 }
 
 .cmd-surface {
-  @apply flex min-h-0 flex-col gap-1.5 px-2.5 py-2;
+  @apply ml-3 flex min-h-0 flex-col gap-1 border-l border-zinc-200 pl-3 py-1;
 }
 
 .cmd-surface-header {
-  @apply flex items-center justify-between gap-2 border-b border-zinc-200/80 pb-1;
+  @apply flex items-center justify-between gap-2 pb-0.5;
 }
 
 .cmd-surface-kind {
-  @apply text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-500;
+  @apply text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-400;
 }
 
 .cmd-surface-meta {
@@ -6164,17 +6418,91 @@ onBeforeUnmount(() => {
 }
 
 .cmd-surface-command {
-  @apply block overflow-x-auto whitespace-pre rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] leading-5 font-mono text-zinc-700;
+  @apply block overflow-x-auto whitespace-pre border-0 bg-transparent px-0 py-0 text-[11px] leading-5 font-mono text-zinc-500;
   scrollbar-width: thin;
 }
 
 .cmd-output {
-  @apply m-0 max-h-44 overflow-auto rounded-xl border border-zinc-200 bg-white px-2.5 py-2 text-[11px] font-mono text-zinc-700 whitespace-pre;
+  @apply m-0 max-h-44 overflow-auto border-0 bg-transparent px-0 py-0.5 text-[11px] font-mono text-zinc-500 whitespace-pre;
   overscroll-behavior: contain;
 }
 
 .cmd-output.cmd-output-condensed {
   max-height: 10rem;
+}
+
+@media (max-width: 639px) {
+  .cmd-card {
+    @apply gap-0.5;
+  }
+
+  .cmd-row {
+    @apply gap-1 py-0.5;
+  }
+
+  .cmd-row.cmd-compact {
+    gap: 0.25rem;
+    padding: 0.125rem 0;
+  }
+
+  .cmd-label,
+  .cmd-group-label {
+    @apply text-[11px] leading-4;
+  }
+
+  .cmd-status {
+    @apply max-w-14 text-[9px] tracking-[0.02em];
+  }
+
+  .cmd-group-inner {
+    @apply pl-2;
+  }
+
+  .cmd-surface {
+    @apply ml-2 gap-0.5 pl-2 py-0.5;
+  }
+
+  .cmd-surface-command,
+  .cmd-output {
+    @apply text-[10px] leading-4;
+  }
+
+  .cmd-output {
+    max-height: 7rem;
+  }
+
+  .live-overlay-inline {
+    @apply max-w-full gap-0.5 py-0;
+  }
+
+  .live-overlay-inline::before {
+    content: none;
+  }
+
+  .live-overlay-header {
+    @apply gap-1.5;
+  }
+
+  .live-overlay-label {
+    @apply text-[11px] leading-4;
+  }
+
+  .live-overlay-status,
+  .live-overlay-summary-inline {
+    @apply text-[10px] leading-4;
+  }
+
+  .live-overlay-toggle-button {
+    @apply px-1 py-0 text-[9px];
+  }
+
+  .live-overlay-summary {
+    @apply text-[11px] leading-4;
+  }
+
+  .live-overlay-activity-item {
+    @apply text-[11px] leading-4 pl-2;
+  }
 }
 
 .cmd-output::-webkit-scrollbar,

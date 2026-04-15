@@ -2,7 +2,7 @@ export type RpcEnvelope<T> = {
   result: T
 }
 
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 export type SpeedMode = 'standard' | 'fast'
 export type CollaborationModeKind = 'default' | 'plan'
 
@@ -250,6 +250,7 @@ export type UiMessage = {
   liveStageSummary?: UiLiveStageSummary
   turnId?: string
   turnIndex?: number
+  streamSequence?: number
 }
 
 export type UiServerRequest = {
