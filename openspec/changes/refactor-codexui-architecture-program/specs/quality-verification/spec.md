@@ -11,6 +11,14 @@ Pure logic introduced by the refactor SHALL be extracted into testable modules a
 - **WHEN** domain modules expose selectors or pure state transitions
 - **THEN** those seams SHALL be verified without requiring end-to-end browser execution
 
+### Requirement: Verification SHALL be invokable through canonical commands
+The project SHALL expose a small canonical verification command surface so architecture slices can be run locally and in automation with the same entrypoints.
+
+#### Scenario: Unit, component, and smoke commands are explicit
+- **WHEN** the architecture program adds automated verification
+- **THEN** the repository SHALL expose canonical commands for unit, component, and smoke verification
+- **AND** those commands SHALL be usable from both local workflows and CI
+
 ### Requirement: Critical UI contracts SHALL have targeted component or browser-level coverage
 The refactor SHALL preserve important user flows through a small but explicit regression surface.
 
@@ -22,6 +30,24 @@ The refactor SHALL preserve important user flows through a small but explicit re
 - **WHEN** a refactor slice changes user-visible behavior or runtime interaction
 - **THEN** `tests.md` SHALL document the manual verification path for that slice alongside any automated coverage
 
+#### Scenario: Each migration phase has a minimum smoke matrix
+- **WHEN** a migration phase lands
+- **THEN** that phase SHALL define the smallest required smoke subset for its changed surface
+- **AND** the smoke matrix SHALL cover route/navigation flows, timeline/live-output flows, or bridge/runtime parity as appropriate for that phase
+
+### Requirement: Build and performance baselines SHALL be recorded as artifacts
+The refactor SHALL leave behind comparable build and runtime baseline artifacts for slices that change routing, rendering, or host boundaries.
+
+#### Scenario: Bundle artifacts are comparable before and after route changes
+- **WHEN** routing or lazy-loading boundaries change
+- **THEN** the project SHALL record comparable bundle artifacts including initial JS/CSS size and route-related chunk membership
+- **AND** those artifacts SHALL be sufficient to verify that deferred screens such as `skills` or review-specific code remain outside the initial route load when intended
+
+#### Scenario: Runtime behavior baselines are captured for timeline changes
+- **WHEN** conversation rendering or scrolling behavior changes
+- **THEN** the project SHALL capture at least a small targeted runtime baseline for thread-open responsiveness or streaming stability
+- **AND** that baseline SHALL be comparable before and after the migration slice
+
 ### Requirement: Architecture refactor slices SHALL be independently releasable
 Each migration slice SHALL be small enough to verify and ship without requiring all later phases to be complete.
 
@@ -32,3 +58,8 @@ Each migration slice SHALL be small enough to verify and ship without requiring 
 #### Scenario: Performance and bundle baselines can be compared phase by phase
 - **WHEN** a migration slice changes routing, rendering, or build boundaries
 - **THEN** the project SHALL be able to compare build output or targeted runtime behavior before and after that slice
+
+#### Scenario: Build-boundary changes include post-build runtime smoke
+- **WHEN** a migration slice changes runtime entrypoints, packaging boundaries, or host/module loading behavior
+- **THEN** the slice SHALL include a post-build module-load or runtime smoke check
+- **AND** that check SHALL run in addition to browser-only manual verification

@@ -7,11 +7,13 @@ This change is needed now because recent work on localhost responsiveness, live 
 ## What Changes
 
 - Introduce a route-owned app shell so `App.vue` stops acting as the controller for every screen and interaction flow.
+- Preserve the current route contract, startup bootstrap behavior, and thread deep-link fallback while moving screen ownership to real route pages.
 - Split the monolithic desktop state composable into explicit domain modules while preserving a stable façade for incremental migration.
 - Formalize a canonical conversation timeline pipeline that merges persisted thread snapshots with live runtime events in one deterministic stream.
+- Define a row-level contract for conversation ordering, identity, reconciliation, scroll state, and live overlay ownership so the timeline refactor is behaviorally well-specified.
 - Separate conversation row modeling from conversation row rendering so assistant text, tool events, live stages, and overlays can evolve without further inflating one component.
-- Unify development and production bridge/server route registration so local-file, WebSocket, and Codex bridge behavior does not diverge across environments.
-- Add an explicit verification surface for architecture work, including automated unit/component coverage for extracted pure logic and a small smoke-test layer for critical user flows.
+- Unify development and production bridge/server route registration so local-file, transport fallback, auth-wrapped WebSocket behavior, and Codex bridge behavior do not diverge across environments.
+- Add an explicit verification surface for architecture work, including canonical automated commands, bundle/performance artifacts, phase smoke matrices, and post-build runtime/module-load checks.
 
 ## Capabilities
 
