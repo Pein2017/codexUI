@@ -19,6 +19,120 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
+### Feature: Localhost chat responsiveness avoids extra sidebar churn
+
+#### Prerequisites
+- App is running from this repository on the same machine where the browser is open.
+- Start the app without the remote tunnel path, for example `npx codexapp --no-tunnel --no-login`.
+- At least one existing thread with enough history to reopen is available.
+- Browser developer tools are available for confirming the live connection uses `/codex-api/ws`.
+
+#### Steps
+1. Open the app over `http://localhost:<port>` and confirm the Network panel shows a successful `/codex-api/ws` connection instead of waiting for an SSE fallback.
+2. Select a thread that has not been opened in the current session yet.
+3. Measure the thread-open experience by confirming the existing message history appears immediately, without waiting for an extra loading pause before the first render.
+4. Send a prompt that causes multiple tool and reasoning updates while the thread is active.
+5. Watch the sidebar while the turn is streaming and confirm the current thread keeps its activity state without the entire thread list visibly reordering on every `item/*` delta.
+6. Repeat once more with another short prompt and confirm the `Thinking` or `Writing response` indicators appear quickly after submit.
+7. Let the turn finish and confirm the sidebar updates normally once the turn starts and once it completes.
+
+#### Expected Results
+- On localhost, the UI starts streaming feedback quickly after submit, with less perceived delay before the first visible state change.
+- Reopening a thread no longer waits on a blocking `thread/resume` round-trip before showing persisted history.
+- Streaming `item/*` notifications update the active thread content without causing unnecessary whole-sidebar refresh churn.
+- Sidebar ordering and unread state still refresh correctly when a turn starts or completes.
+
+#### Rollback/Cleanup
+- Close developer tools if they are no longer needed.
+- Re-enable tunnel or login startup behavior only if that environment is needed for a separate workflow.
+
+### Feature: Thinking selector only exposes Codex-supported efforts
+
+#### Prerequisites
+- App is running from this repository.
+- Any thread or the new-thread screen is open with the main composer visible.
+
+#### Steps
+1. Open the `Thinking` dropdown in the composer.
+2. Confirm the dropdown only lists `Low`, `Medium`, `High`, and `Extra high`.
+3. Confirm `None` and `Minimal` are no longer present anywhere in the selector.
+4. Switch between the four remaining options and confirm the selected value is reflected in the composer summary/runtime chips.
+5. If the browser has older local storage from a previous build, refresh the page and confirm the composer still resolves to a supported effort instead of showing `None` or `Minimal`.
+
+#### Expected Results
+- The `Thinking` selector only exposes `low`, `medium`, `high`, and `xhigh`.
+- Unsupported legacy efforts such as `none` and `minimal` are not preserved as active UI selections.
+- Existing runtime selection flows continue to work with the reduced option set.
+
+#### Rollback/Cleanup
+- Restore the preferred supported `Thinking` value for the thread if you changed it during the test.
+
+### Feature: Live overlay hides redundant "Thinking" header
+
+#### Prerequisites
+- App is running from this repository.
+- A thread can produce a live overlay with reasoning text or an activity summary while a turn is in progress.
+
+#### Steps
+1. Open a thread and send a prompt that produces an in-progress live overlay near the bottom of the conversation.
+2. Watch the overlay while the runtime is in its generic thinking phase.
+3. Confirm the overlay no longer shows a standalone `Thinking` heading above the summary text.
+4. Confirm the main summary text still appears as the first visible line of content.
+5. Continue the turn until a more specific activity label appears, such as `Running command`, and confirm that specific label still renders when available.
+
+#### Expected Results
+- A generic `Thinking` activity label is hidden when it would only duplicate the summary content.
+- The live overlay still shows summary text, timestamps, and expansion controls normally.
+- More specific runtime labels remain visible.
+
+#### Rollback/Cleanup
+- Let the active turn complete or interrupt it if needed.
+
+### Feature: Streaming output updates without visible full-message flicker
+
+#### Prerequisites
+- App is running from this repository on localhost.
+- A thread can produce a multi-step response with streamed text and at least one live runtime update.
+
+#### Steps
+1. Open a thread with enough history that several assistant messages are already visible.
+2. Send a prompt that streams for at least a few seconds.
+3. Watch the already-rendered older messages while new output arrives.
+4. Confirm older messages stay visually stable instead of flashing as if the whole thread re-rendered.
+5. While the viewport is pinned to the bottom, confirm incoming output continues to follow smoothly rather than repeatedly jumping.
+6. Scroll upward during streaming and confirm the detached viewport remains steady without repeated snap-back attempts.
+
+#### Expected Results
+- Existing messages remain visually stable while new streamed content is appended.
+- Auto-follow at the bottom feels continuous rather than like a repeated full refresh.
+- Detached scrolling mode preserves the reader's position without jitter.
+
+#### Rollback/Cleanup
+- Let the active turn finish or interrupt it if needed.
+
+### Feature: Live tool events interleave with assistant text chronologically
+
+#### Prerequisites
+- App is running from this repository on localhost.
+- A thread can produce a response that alternates between assistant text and tool activity, such as commands, MCP calls, or file changes.
+
+#### Steps
+1. Open a thread and send a prompt that is likely to trigger multiple tool events during one response.
+2. Watch the conversation while the turn is still streaming.
+3. Confirm new `Running command`, `Applying changes`, or `Calling MCP tool` rows appear inline in the same conversation flow instead of collecting in one block at the bottom.
+4. Confirm assistant text that arrives after a tool event appears below that tool event, and assistant text that arrived earlier stays above it.
+5. Continue until at least two tool events and two assistant-text segments have appeared.
+6. Confirm the final order reads like one timeline, for example `command -> text -> command -> text`, rather than `all text first` or `all tools last`.
+
+#### Expected Results
+- Live tool events share one chronological stream with assistant text.
+- Command, MCP, and file-change rows are ordered by arrival time, not by message category bucket.
+- Assistant text that resumes after a tool event appears as a new inline text segment below that event instead of continuing inside the older text block above it.
+- The conversation reads as one interleaved execution transcript instead of a top text block plus a bottom tool stack.
+
+#### Rollback/Cleanup
+- Let the active turn finish or interrupt it if needed.
+
 ### Feature: Mobile settings sheet and conversation follow control
 
 #### Prerequisites
@@ -56,6 +170,32 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Close the settings sheet and return the viewport to its previous size.
 - Wait for the active turn to finish or interrupt it if the test thread should not keep running.
+
+### Feature: Mobile composer uses Enter for newline instead of send
+
+#### Prerequisites
+- App is running from this repository.
+- A mobile-sized browser viewport is available, for example `375x812` or `390x844`.
+- Any thread with an enabled composer is open.
+
+#### Steps
+1. Switch the browser to a mobile-sized viewport.
+2. Focus the main composer and type one line of text.
+3. Press `Enter` on the mobile keyboard.
+4. Type a second line of text.
+5. Confirm the draft remains in the composer and has not been sent yet.
+6. Tap the send button.
+7. Repeat the same check in the inline history-edit composer, if visible.
+8. Switch back to a desktop-sized viewport and press `Enter` in the main composer.
+
+#### Expected Results
+- On mobile, pressing `Enter` inserts a newline instead of submitting the message.
+- On mobile, sending still works through the send button.
+- Inline edit composers follow the same mobile rule as the main composer.
+- On desktop, the existing `sendWithEnter` behavior still applies.
+
+#### Rollback/Cleanup
+- Remove the test draft or send it intentionally if the thread can keep it.
 
 ### Feature: Settings menu removes legacy entries
 
@@ -114,7 +254,7 @@ This file tracks manual regression and feature verification steps.
 1. Open thread A.
 2. Change `Model`, `Thinking`, and `Fast mode` to a distinctive combination for thread A, for example `Model A` plus `high` with `Fast mode` enabled.
 3. Switch to thread B.
-4. Change `Model`, `Thinking`, and `Fast mode` to a different combination for thread B, for example `Model B` plus `minimal` with `Fast mode` disabled.
+4. Change `Model`, `Thinking`, and `Fast mode` to a different combination for thread B, for example `Model B` plus `low` with `Fast mode` disabled.
 5. Switch back to thread A.
 6. Confirm thread A restores its original `Model`, `Thinking`, and `Fast mode` selections instead of inheriting thread B's values.
 7. Switch again to thread B and confirm thread B still shows its own combination.
@@ -808,13 +948,16 @@ This file tracks manual regression and feature verification steps.
 9. Trigger a live phase that does have extra runtime detail and confirm the live status card still appears for that richer phase.
 10. If a live phase with extra detail is shown, click `Minimize` on the expanded live status card and confirm it collapses again.
 11. Start another turn and confirm the compact or expanded state resets for the new runtime.
+12. Trigger a live `Calling MCP tool` phase and confirm its expanded overlay reads as one aligned summary block instead of a left-rail timeline with separate count and bullet rows.
 
 #### Expected Results
 - Live plans stay compact by default, even before answer text starts streaming, and read like inline process annotations instead of standalone cards.
 - Expanded plan content is scrollable inside an indented details region instead of permanently taking over a large vertical region.
 - Before assistant text appears, live runtime details remain fully visible.
+- A bare startup-only `Thinking` overlay that only echoes `Mode / Model / Thinking / Speed` does not render at all.
 - During plain `Writing response` streaming with no additional live detail, no standalone live status card is shown.
 - Live status cards still appear for phases that actually carry structured runtime detail.
+- Expanded live status overlays use the same flatter runtime language as the rest of the timeline, without the old left vertical rail or misaligned bullet rows.
 - The assistant's streaming text has a noticeably larger viewport region while the turn is active.
 - Expanded state does not leak into the next turn.
 
@@ -831,25 +974,29 @@ This file tracks manual regression and feature verification steps.
 1. Start a prompt that causes the model to think, run tools, and then stream a textual answer.
 2. While the first non-writing phase is active, confirm the bottom live status card reflects only the current phase instead of an ever-growing cumulative tool count.
 3. Wait until the phase changes at least once, for example from `Thinking` to `Running command`, or from `Running command` to `Calling MCP tool`.
-4. Confirm a compact inline stage summary row appears in the conversation flow above the current live response region, without a rounded card container.
+4. Confirm completed live stages are collected into a centered inline summary strip above the current live response region, rather than stacking as separate vertical cards.
+5. Repeat on a mobile-sized viewport and confirm the stage strip stays as a single horizontally scrollable row instead of wrapping into multiple stacked rows.
+6. On mobile, tap one stage chip and confirm only that stage expands; tapping another chip should collapse the previous one.
 5. Confirm the raw command, MCP, agent-action, or file-change rows that belong to that completed stage are no longer shown separately in the main live flow.
-6. Click `Details` on the inline stage summary and confirm it expands to show the captured reasoning text, activity details, and the tool/file-change rows for that stage.
-7. Collapse the stage summary again and continue the turn until another phase completes.
-8. Confirm multiple stage summaries can accumulate during the same live turn, giving a readable timeline of the work that has happened so far.
+6. Click one stage chip in the strip and confirm a details panel expands below the strip with the captured reasoning text, activity details, and the tool/file-change rows for that stage.
+7. Collapse that stage again and continue the turn until another phase completes.
+8. Confirm multiple stage summaries can accumulate in the same centered strip during the live turn, wrapping horizontally before they ever become a tall vertical stack.
 9. Continue until `Writing response` is active and confirm the remaining bottom live status card behaves like a lightweight current-phase indicator rather than the only place where past tool activity is visible.
 10. Let the turn complete and confirm the temporary live stage summaries disappear cleanly, without leaving broken chunks or duplicate live tool rows behind.
 
 #### Expected Results
-- Completed live runtime phases are summarized inline as compact, expandable stage rows that look like lightweight timeline annotations rather than separate cards.
+- Completed live runtime phases are summarized in a centered inline strip of compact, expandable stage chips that look like lightweight timeline annotations rather than separate cards.
 - The bottom live status card reflects the current phase instead of the entire turn's cumulative command/MCP history.
 - Raw live tool rows are replaced by stage summaries while the turn is active, reducing visual clutter in the main streaming area.
-- Expanding a stage summary reveals the corresponding reasoning/details and the underlying command, MCP, collab, or file-change entries for that phase.
+- On mobile, stage summaries stay in a single narrow strip and do not create a tall wall of runtime pills.
+- On mobile, only one stage detail panel is open at a time.
+- Expanding a stage chip reveals the corresponding reasoning/details and the underlying command, MCP, collab, or file-change entries for that phase.
 - When the turn finishes, the temporary live stage timeline clears without stale UI remnants.
 
 #### Rollback/Cleanup
 - Revert the live stage-summary changes in `src/composables/useDesktopState.ts`, `src/components/content/ThreadConversation.vue`, and `src/types/codex.ts` if the previous bottom-overlay-only interaction is preferred.
 
-### Feature: Command and tool activity render as standalone boxed runtime nodes
+### Feature: Command and tool activity render as flat runtime summary rows
 
 #### Prerequisites
 - App is running from this repository.
@@ -857,21 +1004,26 @@ This file tracks manual regression and feature verification steps.
 
 #### Steps
 1. Open a thread that includes a command execution row and expand it.
-2. Confirm the expanded command shows a dedicated boxed panel with a small `Shell` label, the command itself, and a scrollable output region.
-3. Scroll vertically inside the command output and confirm the output scrolls within the card instead of expanding the full conversation endlessly.
-4. If the command has a long single-line output, confirm horizontal scrolling preserves terminal-style formatting instead of force-wrapping everything.
-5. Expand an MCP tool row and confirm it uses the same boxed runtime-node treatment, with its own label and scrollable output body.
-6. Expand an agent-action row and confirm it follows the same visual pattern.
-7. Expand a stage summary or worked summary and confirm each contained command/tool row still renders as its own standalone box instead of collapsing into one shared text area.
+2. Confirm the collapsed command row reads like a flat summary line such as `1 command · ...` rather than showing the full command inside a rounded card.
+3. Expand the command row and confirm the details open inside a lighter indented log-style region instead of a large boxed card.
+4. Scroll vertically inside the expanded output and confirm the output scrolls within that details region instead of expanding the full conversation endlessly.
+5. If the command has a long single-line output, confirm horizontal scrolling preserves terminal-style formatting instead of force-wrapping everything.
+6. Expand an MCP tool row and confirm it uses the same flattened summary-row treatment in collapsed state.
+7. Expand an agent-action row and confirm it follows the same overall pattern.
+8. Expand a stage summary or worked summary and confirm nested command/tool rows still render as lightweight flat summaries rather than bulky individual cards.
+9. When a live overlay is present for `Calling MCP tool`, confirm summary text and details align to the same left edge rather than showing count and tool names on different visual rails.
 
 #### Expected Results
-- Each command execution is visually separated into its own expandable runtime box.
-- Expanded command output is scrollable within the card and preserves monospace terminal-style layout.
-- MCP and agent-action rows follow the same overall folding and boxed-output pattern, giving the runtime UI a more unified recursive structure.
-- Nested command/tool rows inside stage summaries or worked summaries remain individually inspectable.
+- Command, MCP, and agent-action entries default to flat summary rows that preserve vertical space.
+- Expanded command output remains scrollable and preserves monospace terminal-style layout.
+- MCP and agent-action rows follow the same flatter folding pattern, giving the runtime UI a more unified summary-first structure.
+- Nested command/tool rows inside stage summaries or worked summaries remain individually inspectable without reintroducing bulky cards.
+- Live `Calling MCP tool` overlays align with the flat runtime-summary layout instead of falling back to an older timeline/bullet style.
+- On mobile, collapsed command rows use short summary text instead of exposing the full shell line by default.
+- On mobile, live command/MCP/agent rows do not auto-expand unless the user taps them explicitly.
 
 #### Rollback/Cleanup
-- Revert the runtime-node card styling and template changes in `src/components/content/ThreadConversation.vue` if the previous flatter command-row presentation is preferred.
+- Revert the flattened runtime-summary styling and template changes in `src/components/content/ThreadConversation.vue` if the previous boxier runtime-node presentation is preferred.
 
 ### Feature: Background agent summaries show model and reasoning effort
 
